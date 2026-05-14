@@ -1,11 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import require_api_key
 from app.db import get_db
 from app.models import ApiKey, Span, Trace
-from app.schemas import TraceCreated, TraceIn
+from app.schemas import TraceCreated, TraceIn, TraceList, TraceListItem
 
 router = APIRouter(prefix="/v1/traces", tags=["traces"])
 
@@ -79,3 +80,26 @@ async def ingest_trace(
         ) from exc
 
     return TraceCreated(trace_id=payload.id, span_count=len(payload.spans))
+
+
+@router.get("", response_model=TraceList)
+async def list_traces(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    status_filter: str | None = Query(default=None, alias="status", max_length=16),
+    api_key: ApiKey = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db),
+) -> TraceList:
+    stmt = select(Trace).where(Trace.project_id == api_key.project_id)
+    if status_filter is not None:
+        stmt = stmt.where(Trace.status == status_filter)
+
+    # Fetch one extra row to determine has_more without a separate COUNT query.
+    stmt = stmt.order_by(Trace.started_at.desc()).offset(offset).limit(limit + 1)
+    result = await db.execute(stmt)
+    rows = result.scalars().all()
+
+    has_more = len(rows) > limit
+    items = [TraceListItem.model_validate(r) for r in rows[:limit]]
+
+    return TraceList(items=items, limit=limit, offset=offset, has_more=has_more)

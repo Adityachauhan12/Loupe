@@ -53,3 +53,25 @@ class TraceIn(BaseModel):
 class TraceCreated(BaseModel):
     trace_id: uuid.UUID
     span_count: int
+
+
+class TraceListItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str | None
+    status: str | None
+    started_at: datetime
+    ended_at: datetime | None
+    duration_ms: int | None
+    total_tokens: int | None
+    total_cost_usd: Decimal | None
+    is_replay: bool
+    replay_of_trace_id: uuid.UUID | None
+
+
+class TraceList(BaseModel):
+    items: list[TraceListItem]
+    limit: int
+    offset: int
+    has_more: bool
