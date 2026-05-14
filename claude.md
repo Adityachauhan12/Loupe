@@ -22,8 +22,8 @@ If a feature doesn't make this demo better or cleaner, it's out of scope for now
 Update this checklist as you go:
 
 - [x] Repo initialized, monorepo structure set up
-- [ ] docker-compose.yml with Postgres running
-- [ ] FastAPI app with /health endpoint
+- [x] docker-compose.yml with Postgres running
+- [x] FastAPI app with /health endpoint
 - [ ] Alembic migrations, 4-table schema applied
 - [ ] POST /v1/traces ingestion endpoint
 - [ ] GET /v1/traces list endpoint
@@ -261,7 +261,7 @@ FastAPI BackgroundTasks is sufficient for MVP. Adding a message broker adds oper
 
 ```
 # server/.env
-DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/loupe
+DATABASE_URL=postgresql+asyncpg://loupe:loupe@localhost:5433/loupe
 SECRET_KEY=your-secret-key-here
 SENTRY_DSN=                     # add after Sentry project created
 ENVIRONMENT=development

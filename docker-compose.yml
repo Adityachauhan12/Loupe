@@ -1,0 +1,21 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: loupe-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-loupe}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-loupe}
+      POSTGRES_DB: ${POSTGRES_DB:-loupe}
+    ports:
+      - "5433:5432"
+    volumes:
+      - loupe_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-loupe} -d ${POSTGRES_DB:-loupe}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  loupe_db_data:
