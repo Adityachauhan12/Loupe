@@ -75,3 +75,47 @@ class TraceList(BaseModel):
     limit: int
     offset: int
     has_more: bool
+
+
+class SpanOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    trace_id: uuid.UUID
+    parent_span_id: uuid.UUID | None
+    type: str
+    name: str
+    input: dict[str, Any] | None
+    output: dict[str, Any] | None
+    error: dict[str, Any] | None
+    started_at: datetime
+    ended_at: datetime | None
+    duration_ms: int | None
+    model: str | None
+    provider: str | None
+    prompt_tokens: int | None
+    completion_tokens: int | None
+    total_tokens: int | None
+    cost_usd: Decimal | None
+    metadata: dict[str, Any] | None = Field(default=None, validation_alias="extra_metadata")
+
+
+class TraceDetail(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str | None
+    status: str | None
+    input: dict[str, Any] | None
+    output: dict[str, Any] | None
+    error: dict[str, Any] | None
+    started_at: datetime
+    ended_at: datetime | None
+    duration_ms: int | None
+    total_tokens: int | None
+    total_cost_usd: Decimal | None
+    metadata: dict[str, Any] | None = Field(default=None, validation_alias="extra_metadata")
+    is_replay: bool
+    replay_of_trace_id: uuid.UUID | None
+    created_at: datetime
+    spans: list[SpanOut]

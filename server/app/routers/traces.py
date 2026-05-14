@@ -1,12 +1,21 @@
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.auth import require_api_key
 from app.db import get_db
 from app.models import ApiKey, Span, Trace
-from app.schemas import TraceCreated, TraceIn, TraceList, TraceListItem
+from app.schemas import (
+    TraceCreated,
+    TraceDetail,
+    TraceIn,
+    TraceList,
+    TraceListItem,
+)
 
 router = APIRouter(prefix="/v1/traces", tags=["traces"])
 
@@ -103,3 +112,26 @@ async def list_traces(
     items = [TraceListItem.model_validate(r) for r in rows[:limit]]
 
     return TraceList(items=items, limit=limit, offset=offset, has_more=has_more)
+
+
+@router.get("/{trace_id}", response_model=TraceDetail)
+async def get_trace(
+    trace_id: uuid.UUID,
+    api_key: ApiKey = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db),
+) -> Trace:
+    stmt = (
+        select(Trace)
+        .where(Trace.id == trace_id, Trace.project_id == api_key.project_id)
+        .options(selectinload(Trace.spans))
+    )
+    result = await db.execute(stmt)
+    trace = result.scalar_one_or_none()
+
+    if trace is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Trace not found",
+        )
+
+    return trace
