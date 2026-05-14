@@ -1,0 +1,294 @@
+# CLAUDE.md — Loupe
+
+> This file is read by Claude Code at the start of every session. Keep it updated as the project evolves.
+
+---
+
+## What is Loupe?
+
+Loupe is an open-source observability + replay tool for LLM agents.
+
+**One-line description:** Instrument your agent with 3 lines of Python, see every trace in a dashboard, then replay any trace with a different prompt or model and compare outputs side-by-side.
+
+**The killer demo (North Star — every decision serves this):**
+A buggy agent fails on a query → open Loupe dashboard → see the trace → spot the wrong tool call → hit "Replay" with a tweaked prompt → side-by-side diff shows original (failed) vs new (working) run.
+
+If a feature doesn't make this demo better or cleaner, it's out of scope for now.
+
+---
+
+## Current Build Status
+
+Update this checklist as you go:
+
+- [x] Repo initialized, monorepo structure set up
+- [ ] docker-compose.yml with Postgres running
+- [ ] FastAPI app with /health endpoint
+- [ ] Alembic migrations, 4-table schema applied
+- [ ] POST /v1/traces ingestion endpoint
+- [ ] GET /v1/traces list endpoint
+- [ ] GET /v1/traces/{id} detail endpoint
+- [ ] API key auth on all endpoints
+- [ ] SDK: @loupe.trace decorator working
+- [ ] SDK: loupe.span() context manager working
+- [ ] SDK: OpenAI auto-instrumentation
+- [ ] SDK: Anthropic auto-instrumentation
+- [ ] SDK: Groq auto-instrumentation
+- [ ] SDK: batched async flush with retry
+- [ ] Dashboard: traces list page
+- [ ] Dashboard: trace detail with span tree
+- [ ] Dashboard: replay UI (modify prompt/model, re-run)
+- [ ] Dashboard: side-by-side diff view
+- [ ] Sentry + structlog integrated
+- [ ] Deployed: Vercel (dashboard) + Render (server) + Neon (Postgres)
+- [ ] Demo data seeded on live instance
+- [ ] README complete with screenshots and architecture diagram
+- [ ] examples/cinerater agent instrumented with Loupe
+
+---
+
+## Monorepo Structure
+
+```
+loupe/
+├── sdk/                          # Python SDK — published to PyPI as 'loupe-sdk'
+│   ├── loupe/
+│   │   ├── __init__.py           # exports: trace, span, init
+│   │   ├── core.py               # @trace decorator, span() context manager
+│   │   ├── client.py             # HTTP client: batches + flushes to server
+│   │   ├── models.py             # Pydantic schemas for trace/span wire format
+│   │   └── integrations/
+│   │       ├── openai.py         # wraps openai.ChatCompletion / client.chat.completions
+│   │       ├── anthropic.py      # wraps anthropic.Anthropic.messages.create
+│   │       └── groq.py           # wraps groq.Groq.chat.completions.create
+│   ├── tests/
+│   └── pyproject.toml
+├── server/                       # FastAPI backend
+│   ├── app/
+│   │   ├── main.py
+│   │   ├── routers/
+│   │   │   ├── traces.py         # CRUD for traces
+│   │   │   ├── spans.py          # read spans by trace
+│   │   │   └── replays.py        # create replay, get replay result
+│   │   ├── models.py             # SQLAlchemy ORM models
+│   │   ├── schemas.py            # Pydantic request/response schemas
+│   │   ├── db.py                 # async engine, session factory
+│   │   └── auth.py               # API key verification
+│   ├── alembic/
+│   ├── tests/
+│   └── requirements.txt
+├── dashboard/                    # Next.js 14 frontend
+│   ├── app/
+│   │   ├── page.tsx              # traces list
+│   │   ├── traces/[id]/page.tsx  # trace detail + span tree
+│   │   └── replays/[id]/page.tsx # side-by-side replay diff
+│   ├── components/
+│   │   ├── SpanTree.tsx          # recursive span tree component
+│   │   └── ReplayDiff.tsx        # side-by-side diff component
+│   └── ...
+├── examples/
+│   └── cinerater/                # stripped-down CineRater agent instrumented with Loupe
+├── docker-compose.yml            # Postgres + server (dashboard runs separately in dev)
+├── CLAUDE.md                     # this file
+└── README.md
+```
+
+---
+
+## Tech Stack
+
+| Layer | Choice | Why |
+|-------|--------|-----|
+| SDK | Pure Python, httpx, pydantic | Minimal deps, async-safe, no heavy dependencies for users |
+| Backend | FastAPI + SQLAlchemy 2.0 async | Developer knows it well, production-proven pattern |
+| Migrations | Alembic | Use from day 1, never skip. Migration history matters. |
+| Database | PostgreSQL with JSONB columns | Variable span structure handled cleanly, free on Neon |
+| Frontend | Next.js 14 (App Router) + Tailwind + shadcn/ui | Developer knows React/Next, App Router is current standard |
+| Span tree viz | Custom recursive React component | react-flow is overkill, custom gives full control |
+| Auth | API key via X-API-Key header, hashed in DB | Single-user MVP, no login flow needed |
+| Deployment | Vercel (frontend) + Render (backend) + Neon (Postgres) | All free-tier, total ~₹0-400/month |
+| Error tracking | Sentry free tier | Real error data = real resume metrics |
+| Logging | structlog (structured JSON logs) | Queryable logs, not plain text |
+| CI/CD | GitHub Actions | Free for public repos |
+
+---
+
+## Database Schema
+
+```sql
+-- Namespace for multi-app setups
+CREATE TABLE projects (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- SDK authentication
+CREATE TABLE api_keys (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    project_id UUID REFERENCES projects(id),
+    key_hash TEXT NOT NULL,           -- hash the raw key, never store it
+    name TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    last_used_at TIMESTAMPTZ
+);
+
+-- One row per end-to-end agent run
+CREATE TABLE traces (
+    id UUID PRIMARY KEY,              -- generated by SDK, not server
+    project_id UUID REFERENCES projects(id),
+    name TEXT,                        -- e.g. "movie_search_agent"
+    status TEXT,                      -- 'success' | 'error' | 'running'
+    input JSONB,
+    output JSONB,
+    error JSONB,
+    started_at TIMESTAMPTZ NOT NULL,
+    ended_at TIMESTAMPTZ,
+    duration_ms INTEGER,
+    total_tokens INTEGER,
+    total_cost_usd NUMERIC(10, 6),
+    metadata JSONB,                   -- user-defined tags, arbitrary key-value
+    is_replay BOOLEAN DEFAULT FALSE,
+    replay_of_trace_id UUID REFERENCES traces(id),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_traces_project_started ON traces(project_id, started_at DESC);
+
+-- Individual operations within a trace (LLM calls, tool calls, functions)
+CREATE TABLE spans (
+    id UUID PRIMARY KEY,              -- generated by SDK
+    trace_id UUID REFERENCES traces(id) ON DELETE CASCADE,
+    parent_span_id UUID REFERENCES spans(id),  -- null = root span
+    type TEXT NOT NULL,               -- 'llm' | 'tool' | 'function' | 'retrieval'
+    name TEXT NOT NULL,               -- e.g. 'openai.chat' or 'search_movies'
+    input JSONB,
+    output JSONB,
+    error JSONB,
+    started_at TIMESTAMPTZ NOT NULL,
+    ended_at TIMESTAMPTZ,
+    duration_ms INTEGER,
+    -- LLM-specific (null for non-LLM spans)
+    model TEXT,
+    provider TEXT,                    -- 'openai' | 'anthropic' | 'groq' | 'gemini'
+    prompt_tokens INTEGER,
+    completion_tokens INTEGER,
+    total_tokens INTEGER,
+    cost_usd NUMERIC(10, 6),
+    metadata JSONB
+);
+CREATE INDEX idx_spans_trace ON spans(trace_id);
+CREATE INDEX idx_spans_parent ON spans(parent_span_id);
+
+-- Diff metadata for a replay comparison
+CREATE TABLE replays (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    original_trace_id UUID REFERENCES traces(id),
+    new_trace_id UUID REFERENCES traces(id),  -- the replayed run (also in traces table)
+    modifications JSONB,              -- {prompt_override: "...", model_override: "groq/llama3"}
+    diff_summary JSONB,               -- {token_delta, latency_delta, output_similarity_score}
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+---
+
+## MVP Scope
+
+### IN scope
+- Python SDK: `@loupe.trace` decorator and `loupe.span()` context manager
+- SDK auto-instrumentation for OpenAI, Anthropic, Groq (wrapping their client methods)
+- SDK batches spans and flushes async on trace end + on process exit
+- FastAPI server: ingest traces/spans, query endpoints, replay trigger
+- Postgres storage (JSONB for span payloads)
+- Simple API key auth
+- Dashboard: paginated traces list with status + duration + token count
+- Dashboard: trace detail page showing span tree (type, name, latency, tokens, input/output)
+- Dashboard: replay UI — pick a trace, override prompt or model, trigger re-run
+- Dashboard: side-by-side diff (original output vs replay output, token delta, latency delta)
+- Docker Compose for self-hosted local setup
+- GitHub Actions CI (lint, test, build)
+
+### BRUTALLY OUT — do not implement, do not suggest
+- Multi-user, teams, organisations, RBAC
+- SSO, login/signup flow, email verification
+- Slack, Discord, email, webhook alerts
+- JavaScript, Go, or any non-Python SDK
+- WebSocket realtime streaming (polling every 2s is fine)
+- Custom dashboards, saved views, filters
+- Eval dataset management UI
+- ClickHouse, Redis, or any additional data stores
+- Hosted/cloud version — self-hosted only for now
+- Billing, usage limits, subscription tiers
+- Beautiful design — clean and functional is the target
+
+---
+
+## Key Design Decisions and Tradeoffs
+
+These come up in interviews. Know the reasoning.
+
+**Postgres over ClickHouse:**
+ClickHouse is the production-correct answer for trace data at scale (columnar, optimised for time-series writes and aggregations). Postgres is simpler to operate for a single developer and handles millions of rows with proper indexes. Migration path is clean. Mention both in interviews.
+
+**Flat LLM fields on spans table (not a separate llm_spans table):**
+Polymorphic tables (single-table inheritance) mean NULL columns for non-LLM spans. Separate tables mean joins on every trace read. For 4 span types at MVP scale, flat + NULL is the right tradeoff. Revisit if span types grow past ~10.
+
+**SDK generates trace and span IDs (not server):**
+Client-generated UUIDs allow the SDK to build the full span tree locally and send it in one batch, instead of requiring round-trips to get server-assigned IDs for each span. Idempotent on re-delivery.
+
+**Replayed runs live in traces table:**
+A replay is structurally identical to a regular trace — same schema, same query patterns. Treating them uniformly means the trace detail page works for replays for free. The `replays` table holds only the diff metadata.
+
+**BackgroundTasks over Celery/Redis for replay jobs:**
+FastAPI BackgroundTasks is sufficient for MVP. Adding a message broker adds operational complexity that isn't justified until there's real concurrency. Mention you'd migrate to Celery + Redis at scale.
+
+---
+
+## Code Conventions
+
+- Python: type hints on all function signatures, Pydantic models for all request/response schemas
+- Async throughout the server (async def routes, async SQLAlchemy sessions)
+- FastAPI routers split by domain: one file per resource (traces, spans, replays)
+- No premature abstraction — write the obvious thing first, refactor when the pattern is clear
+- SQLAlchemy models in `models.py`, Pydantic schemas in `schemas.py` — keep these separate
+- Alembic for all schema changes — never alter tables manually in production
+- Structured logging with structlog, not print statements
+- Secrets via environment variables, never hardcoded — use a `.env` file locally, load with `python-dotenv`
+
+---
+
+## Environment Variables
+
+```
+# server/.env
+DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/loupe
+SECRET_KEY=your-secret-key-here
+SENTRY_DSN=                     # add after Sentry project created
+ENVIRONMENT=development
+
+# sdk (set by user in their project)
+LOUPE_API_KEY=lp_...
+LOUPE_HOST=http://localhost:8000
+```
+
+---
+
+## Context: Why This Project Was Built
+
+Built by Aditya Chauhan as a portfolio project during a job search sprint (May 2026). The goal is to demonstrate production backend thinking, LLM systems understanding, and open-source dev tools work to hiring teams at well-funded Indian startups (Razorpay, CRED, Postman, Zerodha, Sarvam) and big tech India.
+
+The project is intentionally scoped to show:
+- Backend systems depth (async FastAPI, proper schema design, indexing decisions)
+- LLM infrastructure understanding (instrumentation, token tracking, cost, replay)
+- Dev tools instincts (good SDK ergonomics, easy self-host, clear README)
+- Production habits (Sentry, structured logging, CI/CD, real metrics)
+
+---
+
+## Sprint Tracker
+
+For high-level decisions, resume work, architecture reviews, and mock interview prep:
+Use the claude.ai chat interface (not Claude Code).
+
+Bring the sprint_tracker.md to those sessions for specifics.
+Claude Code (this environment) is for file-level work: writing code, debugging, running tests, editing files.
