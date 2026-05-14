@@ -28,7 +28,7 @@ Update this checklist as you go:
 - [x] POST /v1/traces ingestion endpoint
 - [x] GET /v1/traces list endpoint
 - [x] GET /v1/traces/{id} detail endpoint
-- [ ] API key auth on all endpoints
+- [x] API key auth on all endpoints
 - [ ] SDK: @loupe.trace decorator working
 - [ ] SDK: loupe.span() context manager working
 - [ ] SDK: OpenAI auto-instrumentation

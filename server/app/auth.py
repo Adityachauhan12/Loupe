@@ -2,12 +2,15 @@ import hashlib
 import secrets
 from datetime import datetime, timezone
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, HTTPException, status
+from fastapi.security import APIKeyHeader
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
 from app.models import ApiKey
+
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
 def hash_key(raw: str) -> str:
@@ -21,7 +24,7 @@ def generate_key() -> tuple[str, str]:
 
 
 async def require_api_key(
-    x_api_key: str | None = Header(default=None),
+    x_api_key: str | None = Depends(api_key_header),
     db: AsyncSession = Depends(get_db),
 ) -> ApiKey:
     if not x_api_key:
