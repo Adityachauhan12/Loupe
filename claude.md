@@ -24,7 +24,7 @@ Update this checklist as you go:
 - [x] Repo initialized, monorepo structure set up
 - [x] docker-compose.yml with Postgres running
 - [x] FastAPI app with /health endpoint
-- [ ] Alembic migrations, 4-table schema applied
+- [x] Alembic migrations, 4-table schema applied
 - [ ] POST /v1/traces ingestion endpoint
 - [ ] GET /v1/traces list endpoint
 - [ ] GET /v1/traces/{id} detail endpoint
