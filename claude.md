@@ -25,7 +25,7 @@ Update this checklist as you go:
 - [x] docker-compose.yml with Postgres running
 - [x] FastAPI app with /health endpoint
 - [x] Alembic migrations, 4-table schema applied
-- [ ] POST /v1/traces ingestion endpoint
+- [x] POST /v1/traces ingestion endpoint
 - [ ] GET /v1/traces list endpoint
 - [ ] GET /v1/traces/{id} detail endpoint
 - [ ] API key auth on all endpoints
