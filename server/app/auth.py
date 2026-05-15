@@ -1,16 +1,18 @@
 import hashlib
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import APIKeyHeader
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db import get_db
+from app.db import SessionLocal, get_db
 from app.models import ApiKey
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+_LAST_USED_UPDATE_INTERVAL = timedelta(minutes=5)
 
 
 def hash_key(raw: str) -> str:
@@ -21,6 +23,23 @@ def generate_key() -> tuple[str, str]:
     """Return (raw_key, key_hash). The raw key is shown to the user once."""
     raw = "lp_" + secrets.token_urlsafe(32)
     return raw, hash_key(raw)
+
+
+async def _touch_last_used(api_key_id: object, last_used_at: datetime | None) -> None:
+    """Update last_used_at in its own session, debounced to once per 5 minutes."""
+    now = datetime.now(timezone.utc)
+    if last_used_at is not None:
+        # Make last_used_at tz-aware for comparison if it isn't already.
+        if last_used_at.tzinfo is None:
+            last_used_at = last_used_at.replace(tzinfo=timezone.utc)
+        if now - last_used_at < _LAST_USED_UPDATE_INTERVAL:
+            return
+
+    async with SessionLocal() as session:
+        await session.execute(
+            update(ApiKey).where(ApiKey.id == api_key_id).values(last_used_at=now)
+        )
+        await session.commit()
 
 
 async def require_api_key(
@@ -43,10 +62,8 @@ async def require_api_key(
             detail="Invalid API key",
         )
 
-    await db.execute(
-        update(ApiKey)
-        .where(ApiKey.id == api_key.id)
-        .values(last_used_at=datetime.now(timezone.utc))
-    )
-    await db.commit()
+    # Fire-and-forget: update last_used_at in its own session so the route's
+    # transaction is not affected. Debounced to avoid a hot-row write per request.
+    await _touch_last_used(api_key.id, api_key.last_used_at)
+
     return api_key

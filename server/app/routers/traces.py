@@ -3,6 +3,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import DataError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -81,11 +82,11 @@ async def ingest_trace(
 
     try:
         await db.commit()
-    except Exception as exc:
+    except (IntegrityError, DataError) as exc:
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Failed to persist trace: {exc.__class__.__name__}",
+            detail=f"Invalid trace data: {exc.__class__.__name__}",
         ) from exc
 
     return TraceCreated(trace_id=payload.id, span_count=len(payload.spans))

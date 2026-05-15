@@ -15,6 +15,7 @@ from sqlalchemy import (
     String,
     Text,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -83,7 +84,7 @@ class Trace(Base):
         "metadata", JSONB
     )
     is_replay: Mapped[bool] = mapped_column(
-        Boolean, server_default="false", nullable=False
+        Boolean, server_default=text("false"), nullable=False
     )
     replay_of_trace_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("traces.id")
