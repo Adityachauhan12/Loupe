@@ -149,7 +149,7 @@ def span(
         yield s
     except Exception as exc:
         s.error = {
-            "type": type.__class__.__name__,
+            "type": exc.__class__.__name__,
             "message": str(exc),
         }
         raise
