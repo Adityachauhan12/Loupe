@@ -13,3 +13,4 @@ Each file here covers one item from the CLAUDE.md build checklist. For every mea
 - [Item 7 — GET /v1/traces/{id} detail endpoint](07-traces-detail.md)
 - [Item 8 — API key auth on all endpoints](08-auth-coverage.md)
 - [Item 9 — SDK: @loupe.trace decorator](09-sdk-trace-decorator.md)
+- [Item 10 — SDK: loupe.span() context manager](10-sdk-span.md)

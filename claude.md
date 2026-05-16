@@ -30,7 +30,7 @@ Update this checklist as you go:
 - [x] GET /v1/traces/{id} detail endpoint
 - [x] API key auth on all endpoints
 - [x] SDK: @loupe.trace decorator working
-- [ ] SDK: loupe.span() context manager working
+- [x] SDK: loupe.span() context manager working
 - [ ] SDK: OpenAI auto-instrumentation
 - [ ] SDK: Anthropic auto-instrumentation
 - [ ] SDK: Groq auto-instrumentation

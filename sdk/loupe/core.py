@@ -3,25 +3,38 @@ from __future__ import annotations
 import functools
 import traceback
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, TypeVar
 
 from loupe.client import LoupeClient
-from loupe.models import TracePayload
+from loupe.models import SpanPayload, TracePayload
 
 F = TypeVar("F", bound=Callable[..., Any])
 
 # Module-level state — set by loupe.init()
 _client: LoupeClient | None = None
-_default_name: str | None = None
+
+# Per-trace context — stored in a ContextVar so it's async-safe and
+# works correctly when traces are nested or run concurrently.
+@dataclass
+class _TraceContext:
+    trace_id: uuid.UUID
+    spans: list[SpanPayload] = field(default_factory=list)
+    current_span_id: uuid.UUID | None = None  # tracks parent for nested spans
+
+_current_trace: ContextVar[_TraceContext | None] = ContextVar(
+    "_current_trace", default=None
+)
 
 
-def init(api_key: str, host: str = "http://localhost:8000", name: str | None = None) -> None:
-    """Call once at startup before using @trace."""
-    global _client, _default_name
+def init(api_key: str, host: str = "http://localhost:8000") -> None:
+    """Call once at startup before using @trace or span()."""
+    global _client
     _client = LoupeClient(api_key=api_key, host=host)
-    _default_name = name
 
 
 def trace(_fn: F | None = None, *, name: str | None = None) -> Any:
@@ -41,11 +54,12 @@ def trace(_fn: F | None = None, *, name: str | None = None) -> Any:
         @functools.wraps(fn)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             if _client is None:
-                # Loupe not initialised — run the function unmodified.
                 return fn(*args, **kwargs)
 
             started_at = datetime.now(timezone.utc)
-            trace_id = uuid.uuid4()
+            ctx = _TraceContext(trace_id=uuid.uuid4())
+            token = _current_trace.set(ctx)
+
             result = None
             error_info: dict[str, Any] | None = None
             status = "success"
@@ -62,11 +76,12 @@ def trace(_fn: F | None = None, *, name: str | None = None) -> Any:
                 }
                 raise
             finally:
+                _current_trace.reset(token)
                 ended_at = datetime.now(timezone.utc)
                 duration_ms = int((ended_at - started_at).total_seconds() * 1000)
 
                 payload = TracePayload(
-                    id=trace_id,
+                    id=ctx.trace_id,
                     name=trace_name,
                     status=status,
                     input=_safe_serialize(args, kwargs),
@@ -75,25 +90,82 @@ def trace(_fn: F | None = None, *, name: str | None = None) -> Any:
                     started_at=started_at,
                     ended_at=ended_at,
                     duration_ms=duration_ms,
+                    spans=ctx.spans,
                 )
                 _client.flush(payload)
 
         return wrapper  # type: ignore[return-value]
 
-    # Allow both @loupe.trace and @loupe.trace(name="...")
     if _fn is not None:
         return decorator(_fn)
     return decorator
 
 
+@contextmanager
+def span(
+    name: str,
+    type: str = "function",  # noqa: A002
+    input: dict[str, Any] | None = None,  # noqa: A002
+    metadata: dict[str, Any] | None = None,
+) -> Generator[SpanPayload, None, None]:
+    """
+    Context manager that records a sub-span within the current trace.
+
+    Usage:
+        with loupe.span("search_movies", type="tool") as s:
+            results = db.search(query)
+            s.output = {"count": len(results)}
+    """
+    ctx = _current_trace.get()
+    if ctx is None or _client is None:
+        # Outside a trace or Loupe not initialised — yield a dummy span.
+        dummy = SpanPayload(
+            id=uuid.uuid4(),
+            type=type,
+            name=name,
+            started_at=datetime.now(timezone.utc),
+        )
+        yield dummy
+        return
+
+    span_id = uuid.uuid4()
+    parent_id = ctx.current_span_id
+    started_at = datetime.now(timezone.utc)
+
+    s = SpanPayload(
+        id=span_id,
+        parent_span_id=parent_id,
+        type=type,
+        name=name,
+        input=input,
+        metadata=metadata,
+        started_at=started_at,
+    )
+
+    # Set this span as the current parent so nested spans link correctly.
+    ctx.current_span_id = span_id
+
+    try:
+        yield s
+    except Exception as exc:
+        s.error = {
+            "type": type.__class__.__name__,
+            "message": str(exc),
+        }
+        raise
+    finally:
+        ctx.current_span_id = parent_id  # restore previous parent
+        s.ended_at = datetime.now(timezone.utc)
+        s.duration_ms = int((s.ended_at - started_at).total_seconds() * 1000)
+        ctx.spans.append(s)
+
+
 def _safe_serialize(*values: Any) -> dict[str, Any] | None:
-    """Best-effort conversion of arbitrary values to a JSON-safe dict."""
     if not values:
         return None
     if len(values) == 1 and isinstance(values[0], dict):
         return values[0]
     if len(values) == 2:
-        # Called as _safe_serialize(args, kwargs)
         args, kwargs = values
         result: dict[str, Any] = {}
         if args:
@@ -105,7 +177,6 @@ def _safe_serialize(*values: Any) -> dict[str, Any] | None:
 
 
 def _to_jsonable(obj: Any) -> Any:
-    """Recursively convert common Python types to JSON-safe equivalents."""
     if isinstance(obj, (str, int, float, bool)) or obj is None:
         return obj
     if isinstance(obj, dict):
