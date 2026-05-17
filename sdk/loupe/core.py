@@ -92,7 +92,7 @@ def trace(_fn: F | None = None, *, name: str | None = None) -> Any:
                     duration_ms=duration_ms,
                     spans=ctx.spans,
                 )
-                _client.flush(payload)
+                _client.enqueue(payload)
 
         return wrapper  # type: ignore[return-value]
 

@@ -15,3 +15,5 @@ Each file here covers one item from the CLAUDE.md build checklist. For every mea
 - [Item 9 — SDK: @loupe.trace decorator](09-sdk-trace-decorator.md)
 - [Item 10 — SDK: loupe.span() context manager](10-sdk-span.md)
 - [Items 11–12 — SDK: OpenAI and Anthropic auto-instrumentation](11-12-sdk-integrations.md)
+- [Item 13 — SDK: Groq auto-instrumentation](13-groq-instrumentation.md)
+- [Item 14 — SDK: Batched async flush with retry](14-async-batch-flush.md)
