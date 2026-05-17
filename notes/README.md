@@ -17,3 +17,4 @@ Each file here covers one item from the CLAUDE.md build checklist. For every mea
 - [Items 11–12 — SDK: OpenAI and Anthropic auto-instrumentation](11-12-sdk-integrations.md)
 - [Item 13 — SDK: Groq auto-instrumentation](13-groq-instrumentation.md)
 - [Item 14 — SDK: Batched async flush with retry](14-async-batch-flush.md)
+- [Item 15 — Dashboard: Traces list page](15-dashboard-traces-list.md)

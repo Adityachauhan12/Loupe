@@ -35,7 +35,7 @@ Update this checklist as you go:
 - [x] SDK: Anthropic auto-instrumentation
 - [x] SDK: Groq auto-instrumentation
 - [x] SDK: batched async flush with retry
-- [ ] Dashboard: traces list page
+- [x] Dashboard: traces list page
 - [ ] Dashboard: trace detail with span tree
 - [ ] Dashboard: replay UI (modify prompt/model, re-run)
 - [ ] Dashboard: side-by-side diff view
