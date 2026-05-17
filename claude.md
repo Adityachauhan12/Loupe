@@ -244,6 +244,91 @@ FastAPI BackgroundTasks is sufficient for MVP. Adding a message broker adds oper
 
 ---
 
+## v2 Roadmap: From Observability to Replay-Driven Prompt Testing
+
+> **Strict order:** finish MVP (items 16–22) first. v2 depends on the trace detail UI, replay infrastructure, and diff view being solid.
+
+The MVP proves end-to-end shipping. v2 is what makes Loupe a different category from LangFuse / LangSmith / Helicone — not "another observability tool" but **"replay-driven prompt testing for LLM agents."**
+
+### v2.1 — Time-Travel Debug
+
+**Pitch:** Pause a trace at any span, override that span's output, resume from there. See the counterfactual run side-by-side with the original.
+
+**User flow:**
+1. Open a failed trace in the dashboard
+2. Click any span → "Branch from here"
+3. Edit the span's output (textarea for LLM responses, JSON editor for tool results)
+4. Hit Continue → server re-executes downstream spans with the override
+5. New trace appears, linked to original via `branched_from_span_id`
+
+**Tech sketch:**
+- DB: `branched_from_span_id UUID REFERENCES spans(id)` on `traces`
+- Server: `POST /v1/traces/{trace_id}/branch` taking `{span_id, new_output}`, kicked off via BackgroundTask
+- SDK: "deterministic replay" mode — for spans before the branch point, replay stored outputs from the original trace; for spans at/after the branch point, execute live with the new value
+- Dashboard: per-span "Branch from here" button on trace detail; diff route comparing branched vs original from the branch point onward
+
+**Killer demo:** Agent failed because it called `search_actors` instead of `search_movies`. Click the bad span → paste correct `search_movies` output → Continue. New trace succeeds. Side-by-side shows what *should* have happened.
+
+**Why no incumbent ships this well:** It requires deterministic replay from day 1 — i.e. capturing exact tool call inputs. That's an architectural commitment most observability tools didn't make. Loupe captures it from the start.
+
+### v2.2 — Prompt CI/CD
+
+**Pitch:** Prompts are code. PRs that touch a prompt run a regression suite against saved production traces. PR comment with pass/fail. Block merge on regression.
+
+**User flow:**
+1. Curate a "golden suite" — collection of traces (manually marked or auto-sampled)
+2. Install `loupe-action` (GitHub Action) in the consuming repo
+3. PR touches a prompt file → action triggers
+4. Action calls `POST /v1/suites/{id}/run` with the new prompt
+5. Loupe replays each trace in the suite against the new prompt; judge LLM scores each as `equivalent` / `regressed` / `improved`
+6. Action posts a PR comment: **"✓ 95/100 passed. 5 regressions. [View diffs]"**
+7. PR status check: green/red, configurable to block merge
+
+**Tech sketch:**
+- DB: `suites` (collection of trace IDs); `suite_runs` (one row per execution with pass/fail counts + per-trace results JSONB)
+- Server: `POST /v1/suites`, `POST /v1/suites/{id}/run`, `GET /v1/suite_runs/{id}`
+- `JudgeService`: takes (original_output, new_output, original_input) → Claude/GPT-4 prompt → classification + reasoning
+- GitHub Action: small TS action, reads PR diff, finds changed `.txt`/`.md`/`.prompt` files, calls Loupe API, posts PR comment via the GitHub API
+- Dashboard: `/suites` list, `/suites/{id}` detail with run history, `/suite_runs/{id}` view with per-trace pass/fail rows linking to existing diff view
+
+**Killer demo:** Live GitHub PR → action runs in 30 seconds → comment shows 5 regressions → click "View diffs" → land in Loupe dashboard with the 5 failed traces side-by-side.
+
+**Why this is portfolio-strong:** It's an end-to-end loop (production trace → saved as test → run on every PR → block bad merges). That's systems thinking, not "I built a dashboard."
+
+### v2.3 — Regression Suite CLI (foundation under v2.2)
+
+Same suite infrastructure as v2.2, exposed via Python CLI for non-GitHub workflows:
+
+```
+loupe suite create --from last:100              # snapshot last 100 prod traces
+loupe suite run <suite_id> --prompt new.txt     # replay with new prompt
+loupe suite diff <run_id_a> <run_id_b>          # compare two runs
+```
+
+Most teams will use this directly. v2.2 is the GitHub wrapper on top of the same primitives.
+
+### v2 Build Checklist
+
+- [ ] DB migration: `branched_from_span_id` on traces; `suites` and `suite_runs` tables
+- [ ] Server: deterministic replay engine (replay stored span outputs up to a branch point)
+- [ ] Server: `POST /v1/traces/{id}/branch` endpoint
+- [ ] Server: `JudgeService` with Claude/GPT-4 backend
+- [ ] Server: suite + suite_run CRUD endpoints
+- [ ] Dashboard: per-span "Branch from here" on trace detail
+- [ ] Dashboard: `/suites` and `/suite_runs/{id}` pages
+- [ ] CLI: `loupe suite create/run/diff` commands
+- [ ] GitHub Action: `loupe-action` repo, PR comment poster, status check
+- [ ] Demo repo: a sample agent with a "golden suite" wired up, showing the full PR-blocking flow
+
+### Still Out of Scope (even for v2)
+
+- Multi-tenant SaaS / billing
+- Auto-fix suggestions (interesting, separate concern)
+- Native eval dataset management UI (suites replace this)
+- Realtime streaming / WebSockets (polling is still fine)
+
+---
+
 ## Code Conventions
 
 - Python: type hints on all function signatures, Pydantic models for all request/response schemas
