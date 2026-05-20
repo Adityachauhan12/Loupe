@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getTrace, TraceDetail } from "@/lib/api";
 import { SpanTree } from "@/components/SpanTree";
+import { ReplayForm } from "@/components/ReplayForm";
 
 export default async function TraceDetailPage({
   params,
@@ -61,6 +62,16 @@ export default async function TraceDetailPage({
           </h2>
           <SpanTree spans={trace.spans} totalMs={trace.duration_ms} />
         </section>
+
+        {/* Replay */}
+        {!trace.is_replay && (
+          <section className="border border-gray-800 rounded p-5">
+            <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-widest mb-4">
+              Replay this trace
+            </h2>
+            <ReplayForm traceId={trace.id} />
+          </section>
+        )}
       </main>
     </div>
   );

@@ -37,7 +37,7 @@ Update this checklist as you go:
 - [x] SDK: batched async flush with retry
 - [x] Dashboard: traces list page
 - [x] Dashboard: trace detail with span tree
-- [ ] Dashboard: replay UI (modify prompt/model, re-run)
+- [x] Dashboard: replay UI (modify prompt/model, re-run)
 - [ ] Dashboard: side-by-side diff view
 - [ ] Sentry + structlog integrated
 - [ ] Deployed: Vercel (dashboard) + Render (server) + Neon (Postgres)

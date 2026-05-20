@@ -119,3 +119,14 @@ class TraceDetail(BaseModel):
     replay_of_trace_id: uuid.UUID | None
     created_at: datetime
     spans: list[SpanOut]
+
+
+class ReplayIn(BaseModel):
+    original_trace_id: uuid.UUID
+    prompt_override: str | None = None   # replaces / prepends system message
+    model_override: str | None = None    # e.g. "gpt-4o-mini", "claude-3-haiku-20240307"
+
+
+class ReplayCreated(BaseModel):
+    replay_id: uuid.UUID
+    new_trace_id: uuid.UUID

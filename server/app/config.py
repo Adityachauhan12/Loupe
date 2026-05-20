@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     environment: str = "development"
     secret_key: str = "dev-secret-change-me"
     sentry_dsn: str | None = None
+    openai_api_key: str | None = None
+    anthropic_api_key: str | None = None
 
 
 settings = Settings()
