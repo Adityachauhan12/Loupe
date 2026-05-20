@@ -5,16 +5,16 @@ import { createReplay } from "@/app/traces/[id]/actions";
 
 const MODELS = [
   { value: "original", label: "Original model (no change)" },
-  // Anthropic
+  // Groq — cheapest / free tier
+  { value: "llama3-70b-8192", label: "Llama 3 70B · Groq (free)" },
+  { value: "llama3-8b-8192", label: "Llama 3 8B · Groq (free)" },
+  { value: "llama-3.1-8b-instant", label: "Llama 3.1 8B Instant · Groq (free)" },
+  // Anthropic — use Haiku to keep costs low
+  { value: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5 · cheap" },
   { value: "claude-sonnet-4-5", label: "Claude Sonnet 4.5" },
-  { value: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5" },
-  { value: "claude-opus-4-5", label: "Claude Opus 4.5" },
   // OpenAI
-  { value: "gpt-4o", label: "GPT-4o" },
   { value: "gpt-4o-mini", label: "GPT-4o mini" },
-  // Groq
-  { value: "llama3-70b-8192", label: "Llama 3 70B (Groq)" },
-  { value: "llama3-8b-8192", label: "Llama 3 8B (Groq)" },
+  { value: "gpt-4o", label: "GPT-4o" },
 ];
 
 type ActionState = { error: string } | null;

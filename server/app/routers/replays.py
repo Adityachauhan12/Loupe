@@ -58,28 +58,48 @@ def _apply_prompt_override(messages: list[dict[str, Any]], override: str) -> lis
     return [{"role": "system", "content": override}] + result
 
 
-def _is_anthropic(provider: str | None, model: str | None) -> bool:
-    if provider == "anthropic":
-        return True
-    if model and model.startswith("claude"):
-        return True
-    return False
+_GROQ_PREFIXES = ("llama", "gemma", "mixtral", "whisper")
+
+def _detect_provider(model: str, fallback: str | None = None) -> str:
+    """Infer the API provider from a model name."""
+    if model.startswith("claude"):
+        return "anthropic"
+    if any(model.startswith(p) for p in _GROQ_PREFIXES):
+        return "groq"
+    if fallback in ("anthropic", "groq"):
+        return fallback
+    return "openai"
+
+
+async def _call_openai_compat(
+    base_url: str, api_key: str, model: str, messages: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Call any OpenAI-compatible endpoint (OpenAI, Groq, etc.)."""
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(
+            f"{base_url}/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={"model": model, "messages": messages},
+        )
+        if not resp.is_success:
+            raise RuntimeError(f"API {resp.status_code}: {resp.text[:300]}")
+        return resp.json()
 
 
 async def _call_openai(model: str, messages: list[dict[str, Any]]) -> dict[str, Any]:
     if not settings.openai_api_key:
         raise RuntimeError("OPENAI_API_KEY not configured in server .env")
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {settings.openai_api_key}",
-                "Content-Type": "application/json",
-            },
-            json={"model": model, "messages": messages},
-        )
-        resp.raise_for_status()
-        return resp.json()
+    return await _call_openai_compat(
+        "https://api.openai.com/v1", settings.openai_api_key, model, messages
+    )
+
+
+async def _call_groq(model: str, messages: list[dict[str, Any]]) -> dict[str, Any]:
+    if not settings.groq_api_key:
+        raise RuntimeError("GROQ_API_KEY not configured in server .env")
+    return await _call_openai_compat(
+        "https://api.groq.com/openai/v1", settings.groq_api_key, model, messages
+    )
 
 
 async def _call_anthropic(
@@ -173,23 +193,26 @@ async def _run_replay(
                     else:
                         messages = _apply_prompt_override(messages, prompt_override)
 
-                model = model_override or orig_span.model or "gpt-4o-mini"
-                # When user overrides model, infer provider from the new model name.
-                # When keeping original, use original provider.
-                if model_override:
-                    use_anthropic = model_override.startswith("claude")
-                else:
-                    use_anthropic = _is_anthropic(orig_span.provider, orig_span.model)
+                model = model_override or orig_span.model or "claude-haiku-4-5-20251001"
+                provider = _detect_provider(model, fallback=orig_span.provider)
 
                 try:
                     span_ended = datetime.now(timezone.utc)
-                    if use_anthropic:
+                    if provider == "anthropic":
                         raw = await _call_anthropic(model, messages, system_prompt)
                         prompt_tokens = raw.get("usage", {}).get("input_tokens", 0)
                         completion_tokens = raw.get("usage", {}).get("output_tokens", 0)
                         content_blocks = raw.get("content", [])
                         content_text = content_blocks[0].get("text", "") if content_blocks else ""
                         provider = "anthropic"
+                    elif provider == "groq":
+                        raw = await _call_groq(model, messages)
+                        usage = raw.get("usage", {})
+                        prompt_tokens = usage.get("prompt_tokens", 0)
+                        completion_tokens = usage.get("completion_tokens", 0)
+                        choices = raw.get("choices", [])
+                        content_text = choices[0]["message"]["content"] if choices else ""
+                        provider = "groq"
                     else:
                         raw = await _call_openai(model, messages)
                         usage = raw.get("usage", {})

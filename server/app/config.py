@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     sentry_dsn: str | None = None
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
+    groq_api_key: str | None = None
 
 
 settings = Settings()
