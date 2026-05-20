@@ -18,3 +18,5 @@ Each file here covers one item from the CLAUDE.md build checklist. For every mea
 - [Item 13 — SDK: Groq auto-instrumentation](13-groq-instrumentation.md)
 - [Item 14 — SDK: Batched async flush with retry](14-async-batch-flush.md)
 - [Item 15 — Dashboard: Traces list page](15-dashboard-traces-list.md)
+- [Item 16 — Dashboard: Trace detail + span tree](16-trace-detail-span-tree.md)
+- [Item 17 — Dashboard: Replay UI](17-replay-ui.md)

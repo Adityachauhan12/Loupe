@@ -89,6 +89,12 @@ async def _call_anthropic(
         raise RuntimeError("ANTHROPIC_API_KEY not configured in server .env")
     # Anthropic's messages API excludes system role from the messages array
     non_system = [m for m in messages if m.get("role") != "system"]
+    # Extract system from messages if not provided separately
+    if system is None:
+        for m in messages:
+            if m.get("role") == "system":
+                system = str(m.get("content", ""))
+                break
     payload: dict[str, Any] = {
         "model": model,
         "max_tokens": 2048,
@@ -106,7 +112,8 @@ async def _call_anthropic(
             },
             json=payload,
         )
-        resp.raise_for_status()
+        if not resp.is_success:
+            raise RuntimeError(f"Anthropic {resp.status_code}: {resp.text[:300]}")
         return resp.json()
 
 
@@ -167,7 +174,12 @@ async def _run_replay(
                         messages = _apply_prompt_override(messages, prompt_override)
 
                 model = model_override or orig_span.model or "gpt-4o-mini"
-                use_anthropic = _is_anthropic(orig_span.provider, model)
+                # When user overrides model, infer provider from the new model name.
+                # When keeping original, use original provider.
+                if model_override:
+                    use_anthropic = model_override.startswith("claude")
+                else:
+                    use_anthropic = _is_anthropic(orig_span.provider, orig_span.model)
 
                 try:
                     span_ended = datetime.now(timezone.utc)
@@ -340,8 +352,9 @@ async def create_replay(
         started_at=now,
     )
     db.add(new_trace)
+    await db.commit()  # commit trace first — FK in replays references it
 
-    # Create Replay record
+    # Create Replay record (new_trace_id now exists in DB)
     replay_row = Replay(
         id=replay_id,
         original_trace_id=original.id,
