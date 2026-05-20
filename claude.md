@@ -39,7 +39,7 @@ Update this checklist as you go:
 - [x] Dashboard: trace detail with span tree
 - [x] Dashboard: replay UI (modify prompt/model, re-run)
 - [x] Dashboard: side-by-side diff view
-- [ ] Sentry + structlog integrated
+- [x] Sentry + structlog integrated
 - [ ] Deployed: Vercel (dashboard) + Render (server) + Neon (Postgres)
 - [ ] Demo data seeded on live instance
 - [ ] README complete with screenshots and architecture diagram

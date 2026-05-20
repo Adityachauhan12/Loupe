@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import logging
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
 import httpx
+import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -19,7 +19,7 @@ from app.schemas import ReplayCreated, ReplayDetail, ReplayIn
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-logger = logging.getLogger("loupe")
+logger = structlog.get_logger()
 
 router = APIRouter(prefix="/v1/replays", tags=["replays"])
 
@@ -159,7 +159,7 @@ async def _run_replay(
         original = result.scalar_one_or_none()
 
         if original is None:
-            logger.error("replay %s: original trace %s not found", replay_id, original_trace_id)
+            logger.error("original trace not found", replay_id=str(replay_id), original_trace_id=str(original_trace_id))
             return
 
         new_spans: list[dict[str, Any]] = []
@@ -252,7 +252,7 @@ async def _run_replay(
                     final_output = {"content": content_text}
 
                 except Exception as exc:
-                    logger.error("replay %s: LLM call failed: %s", replay_id, exc)
+                    logger.error("llm call failed", replay_id=str(replay_id), error=str(exc))
                     replay_status = "error"
                     trace_error = {"type": type(exc).__name__, "message": str(exc)}
                     new_spans.append({
@@ -334,7 +334,7 @@ async def _run_replay(
             }
 
         await db.commit()
-        logger.info("replay %s complete — status=%s", replay_id, replay_status)
+        logger.info("replay complete", replay_id=str(replay_id), status=replay_status)
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────
