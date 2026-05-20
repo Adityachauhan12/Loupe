@@ -1,17 +1,18 @@
 "use client";
 
-import { useActionState, useRef } from "react";
+import { useActionState } from "react";
 import { createReplay } from "@/app/traces/[id]/actions";
 
 const MODELS = [
   { value: "original", label: "Original model (no change)" },
-  { value: "gpt-4o", label: "GPT-4o" },
-  { value: "gpt-4o-mini", label: "GPT-4o mini" },
-  { value: "gpt-3.5-turbo", label: "GPT-3.5 Turbo" },
+  // Anthropic
   { value: "claude-sonnet-4-5", label: "Claude Sonnet 4.5" },
   { value: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5" },
-  { value: "claude-3-5-sonnet-20241022", label: "Claude 3.5 Sonnet" },
-  { value: "claude-3-haiku-20240307", label: "Claude 3 Haiku" },
+  { value: "claude-opus-4-5", label: "Claude Opus 4.5" },
+  // OpenAI
+  { value: "gpt-4o", label: "GPT-4o" },
+  { value: "gpt-4o-mini", label: "GPT-4o mini" },
+  // Groq
   { value: "llama3-70b-8192", label: "Llama 3 70B (Groq)" },
   { value: "llama3-8b-8192", label: "Llama 3 8B (Groq)" },
 ];
