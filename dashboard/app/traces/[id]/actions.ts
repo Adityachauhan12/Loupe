@@ -28,5 +28,5 @@ export async function createReplay(traceId: string, formData: FormData) {
   }
 
   const data = (await res.json()) as { replay_id: string; new_trace_id: string };
-  redirect(`/traces/${data.new_trace_id}`);
+  redirect(`/replays/${data.replay_id}`);
 }

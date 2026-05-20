@@ -123,10 +123,21 @@ class TraceDetail(BaseModel):
 
 class ReplayIn(BaseModel):
     original_trace_id: uuid.UUID
-    prompt_override: str | None = None   # replaces / prepends system message
-    model_override: str | None = None    # e.g. "gpt-4o-mini", "claude-3-haiku-20240307"
+    prompt_override: str | None = None
+    model_override: str | None = None
 
 
 class ReplayCreated(BaseModel):
     replay_id: uuid.UUID
     new_trace_id: uuid.UUID
+
+
+class ReplayDetail(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    replay_id: uuid.UUID = Field(validation_alias="id")
+    original_trace_id: uuid.UUID
+    new_trace_id: uuid.UUID | None
+    modifications: dict[str, Any] | None
+    diff_summary: dict[str, Any] | None
+    created_at: datetime

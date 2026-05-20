@@ -15,7 +15,7 @@ from app.auth import require_api_key
 from app.config import settings
 from app.db import SessionLocal, get_db
 from app.models import ApiKey, Replay, Span, Trace
-from app.schemas import ReplayCreated, ReplayIn
+from app.schemas import ReplayCreated, ReplayDetail, ReplayIn
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -403,15 +403,15 @@ async def create_replay(
     return ReplayCreated(replay_id=replay_id, new_trace_id=new_trace_id)
 
 
-@router.get("/{replay_id}", response_model=ReplayCreated)
+@router.get("/{replay_id}", response_model=ReplayDetail)
 async def get_replay(
     replay_id: uuid.UUID,
     api_key: ApiKey = Depends(require_api_key),
     db: AsyncSession = Depends(get_db),
-) -> ReplayCreated:
+) -> Replay:
     stmt = select(Replay).where(Replay.id == replay_id)
     result = await db.execute(stmt)
     replay = result.scalar_one_or_none()
     if replay is None:
         raise HTTPException(status_code=404, detail="Replay not found")
-    return ReplayCreated(replay_id=replay.id, new_trace_id=replay.new_trace_id)
+    return replay

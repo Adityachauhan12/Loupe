@@ -90,3 +90,23 @@ export async function getTrace(id: string): Promise<TraceDetail> {
   if (!res.ok) throw new Error(`GET /v1/traces/${id} failed: ${res.status}`);
   return res.json() as Promise<TraceDetail>;
 }
+
+// ── Replay detail ──────────────────────────────────────────────────────────
+
+export interface ReplayDetail {
+  replay_id: string;
+  original_trace_id: string;
+  new_trace_id: string | null;
+  modifications: { prompt_override?: string | null; model_override?: string | null } | null;
+  diff_summary: { token_delta?: number; latency_delta_ms?: number; status?: string } | null;
+  created_at: string;
+}
+
+export async function getReplay(id: string): Promise<ReplayDetail> {
+  const res = await fetch(`${API_BASE}/v1/replays/${id}`, {
+    headers,
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`GET /v1/replays/${id} failed: ${res.status}`);
+  return res.json() as Promise<ReplayDetail>;
+}
