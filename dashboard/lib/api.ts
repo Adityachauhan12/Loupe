@@ -3,6 +3,8 @@ const API_KEY = process.env.LOUPE_API_KEY ?? "";
 
 const headers = { "X-API-Key": API_KEY };
 
+// ── Traces list ────────────────────────────────────────────────────────────
+
 export interface TraceListItem {
   id: string;
   name: string | null;
@@ -33,10 +35,58 @@ export async function getTraces(params: {
   if (params.limit != null) url.searchParams.set("limit", String(params.limit));
   if (params.offset != null) url.searchParams.set("offset", String(params.offset));
 
-  const res = await fetch(url.toString(), {
+  const res = await fetch(url.toString(), { headers, cache: "no-store" });
+  if (!res.ok) throw new Error(`GET /v1/traces failed: ${res.status}`);
+  return res.json() as Promise<TraceList>;
+}
+
+// ── Trace detail ───────────────────────────────────────────────────────────
+
+export interface SpanOut {
+  id: string;
+  trace_id: string;
+  parent_span_id: string | null;
+  type: string;
+  name: string;
+  input: Record<string, unknown> | null;
+  output: Record<string, unknown> | null;
+  error: Record<string, unknown> | null;
+  started_at: string;
+  ended_at: string | null;
+  duration_ms: number | null;
+  model: string | null;
+  provider: string | null;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+  total_tokens: number | null;
+  cost_usd: string | null;
+  metadata: Record<string, unknown> | null;
+}
+
+export interface TraceDetail {
+  id: string;
+  name: string | null;
+  status: string | null;
+  input: Record<string, unknown> | null;
+  output: Record<string, unknown> | null;
+  error: Record<string, unknown> | null;
+  started_at: string;
+  ended_at: string | null;
+  duration_ms: number | null;
+  total_tokens: number | null;
+  total_cost_usd: string | null;
+  metadata: Record<string, unknown> | null;
+  is_replay: boolean;
+  replay_of_trace_id: string | null;
+  created_at: string;
+  spans: SpanOut[];
+}
+
+export async function getTrace(id: string): Promise<TraceDetail> {
+  const res = await fetch(`${API_BASE}/v1/traces/${id}`, {
     headers,
     cache: "no-store",
   });
-  if (!res.ok) throw new Error(`GET /v1/traces failed: ${res.status}`);
-  return res.json() as Promise<TraceList>;
+  if (!res.ok) throw new Error(`GET /v1/traces/${id} failed: ${res.status}`);
+  return res.json() as Promise<TraceDetail>;
 }

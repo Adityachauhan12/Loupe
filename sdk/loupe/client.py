@@ -112,7 +112,7 @@ class LoupeClient:
                     # 4xx — retrying won't help
                     logger.warning(
                         "loupe: server rejected trace %s (%s): %s",
-                        trace.id, resp.status_code, resp.text,
+                        trace.id, resp.status_code, resp.text[:200],
                     )
                     return
                 logger.warning(
@@ -124,6 +124,10 @@ class LoupeClient:
                     "loupe: network error for trace %s (attempt %d/%d): %s",
                     trace.id, attempt, _MAX_RETRIES, exc,
                 )
+            except Exception as exc:
+                # Unexpected error (serialization, SSL config, etc.) — log and abort.
+                logger.error("loupe: unexpected error delivering trace %s: %s", trace.id, exc)
+                return
 
             if attempt < _MAX_RETRIES:
                 await asyncio.sleep(_BACKOFF_BASE * (2 ** (attempt - 1)))

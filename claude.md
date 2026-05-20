@@ -36,7 +36,7 @@ Update this checklist as you go:
 - [x] SDK: Groq auto-instrumentation
 - [x] SDK: batched async flush with retry
 - [x] Dashboard: traces list page
-- [ ] Dashboard: trace detail with span tree
+- [x] Dashboard: trace detail with span tree
 - [ ] Dashboard: replay UI (modify prompt/model, re-run)
 - [ ] Dashboard: side-by-side diff view
 - [ ] Sentry + structlog integrated

@@ -16,16 +16,19 @@ export default async function TracesPage({
   searchParams: Promise<{ offset?: string; status?: string }>;
 }) {
   const { offset: offsetStr, status } = await searchParams;
-  const offset = Math.max(0, Number(offsetStr ?? 0));
+  const rawOffset = Number(offsetStr ?? 0);
+  const offset = Number.isFinite(rawOffset) ? Math.max(0, rawOffset) : 0;
 
   let data;
   try {
     data = await getTraces({ limit: LIMIT, offset, status });
-  } catch {
+  } catch (err) {
+    console.error("[loupe] Failed to fetch traces:", err);
     return (
       <Shell status={status}>
         <p className="text-red-400 text-sm py-12 text-center">
-          Could not reach the Loupe server. Is it running?
+          Could not reach the Loupe server. Is it running on{" "}
+          <span className="font-mono">{process.env.LOUPE_API_URL ?? "http://localhost:8000"}</span>?
         </p>
       </Shell>
     );
