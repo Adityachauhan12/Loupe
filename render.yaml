@@ -1,0 +1,35 @@
+services:
+  - type: web
+    name: loupe-server
+    runtime: python
+    rootDir: server
+    buildCommand: pip install -r requirements.txt
+    startCommand: bash start.sh
+    plan: free
+    envVars:
+      # Set this to your Neon connection string after creating the database.
+      # Format: postgresql+asyncpg://user:pass@ep-xxx.region.aws.neon.tech/neondb?ssl=require
+      - key: DATABASE_URL
+        sync: false
+
+      # Render generates a secure random value automatically.
+      - key: SECRET_KEY
+        generateValue: true
+
+      - key: ENVIRONMENT
+        value: production
+
+      # Optional but recommended — paste your Sentry DSN here.
+      - key: SENTRY_DSN
+        sync: false
+
+      # At least one LLM key is required for the replay feature.
+      - key: GROQ_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+
+      - key: GROQ_MODEL
+        value: llama-3.3-70b-versatile

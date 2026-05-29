@@ -22,3 +22,5 @@ Each file here covers one item from the CLAUDE.md build checklist. For every mea
 - [Item 17 — Dashboard: Replay UI](17-replay-ui.md)
 - [Item 18 — Dashboard: Side-by-side replay diff](18-replay-diff.md)
 - [Item 19 — Sentry + structlog](19-sentry-structlog.md)
+- [Item 20 — CineRater example + SDK atexit fix](20-cinerater-example.md)
+- [Item 21 — Deployment: Neon + Render + Vercel](21-deployment.md)
