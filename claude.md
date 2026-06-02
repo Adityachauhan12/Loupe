@@ -40,10 +40,10 @@ Update this checklist as you go:
 - [x] Dashboard: replay UI (modify prompt/model, re-run)
 - [x] Dashboard: side-by-side diff view
 - [x] Sentry + structlog integrated
-- [ ] Deployed: Vercel (dashboard) + Render (server) + Neon (Postgres)
-- [ ] Demo data seeded on live instance
-- [ ] README complete with screenshots and architecture diagram
-- [ ] examples/cinerater agent instrumented with Loupe
+- [x] Deployed: Vercel (dashboard) + Render (server) + Neon (Postgres)
+- [x] Demo data seeded on live instance
+- [x] README complete with architecture diagram (screenshots + live URLs pending)
+- [x] examples/cinerater agent instrumented with Loupe
 
 ---
 
