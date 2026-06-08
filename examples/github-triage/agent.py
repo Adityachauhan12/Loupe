@@ -65,6 +65,7 @@ def classify_issue(client: Groq, issue: dict) -> dict:
 def triage_repo():
     """Top-level trace — one run = one full triage pass over the repo."""
     client = Groq(api_key=os.environ["GROQ_API_KEY"])
+    loupe.instrument_groq(client)
 
     print(f"Fetching open issues from {os.environ['GITHUB_REPO']}...")
     issues = list_open_issues(max_issues=MAX_ISSUES)

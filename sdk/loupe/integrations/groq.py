@@ -49,7 +49,13 @@ def instrument_groq(client: Any) -> None:
         with span("groq.chat", type="llm") as s:
             s.provider = "groq"
             s.model = model
-            s.input = {"messages": messages}
+            s.input = {
+                "messages": messages,
+                "model": model,
+                "temperature": kwargs.get("temperature"),
+                "seed": kwargs.get("seed"),
+                "response_format": kwargs.get("response_format"),
+            }
 
             response = original_create(*args, **kwargs)
 
