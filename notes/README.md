@@ -24,3 +24,4 @@ Each file here covers one item from the CLAUDE.md build checklist. For every mea
 - [Item 19 — Sentry + structlog](19-sentry-structlog.md)
 - [Item 20 — CineRater example + SDK atexit fix](20-cinerater-example.md)
 - [Item 21 — Deployment: Neon + Render + Vercel](21-deployment.md)
+- [Item 22 — v2 Replay Engine: Design (time-travel debugger)](22-v2-replay-engine-design.md)
