@@ -3,8 +3,7 @@ from __future__ import annotations
 import functools
 import traceback
 import uuid
-from collections.abc import Callable, Generator
-from contextlib import contextmanager
+from collections.abc import Callable
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -101,63 +100,143 @@ def trace(_fn: F | None = None, *, name: str | None = None) -> Any:
     return decorator
 
 
-@contextmanager
+class _SpanHandle:
+    """
+    Returned by span(). Supports two usage patterns:
+
+    As a context manager (manual input/output):
+        with loupe.span("search", type="tool") as s:
+            s.output = {"count": 3}
+
+    As a decorator (auto-captures args and return value):
+        @loupe.span(type="tool", name="search")
+        def search(query: str) -> list: ...
+    """
+
+    def __init__(
+        self,
+        name: str | None,
+        type: str,  # noqa: A002
+        input: dict[str, Any] | None,  # noqa: A002
+        metadata: dict[str, Any] | None,
+    ) -> None:
+        self._name = name
+        self._type = type
+        self._input = input
+        self._metadata = metadata
+        # state used by the context-manager path
+        self._span: SpanPayload | None = None
+        self._prev_parent: uuid.UUID | None = None
+        self._ctx: _TraceContext | None = None
+
+    # ── decorator protocol ──────────────────────────────────────────────────
+
+    def __call__(self, fn: F) -> F:  # type: ignore[override]
+        span_name = self._name or fn.__name__
+        span_type = self._type
+        span_metadata = self._metadata
+
+        @functools.wraps(fn)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            ctx = _current_trace.get()
+            if ctx is None or _client is None:
+                return fn(*args, **kwargs)
+
+            span_id = uuid.uuid4()
+            parent_id = ctx.current_span_id
+            started_at = datetime.now(timezone.utc)
+
+            s = SpanPayload(
+                id=span_id,
+                parent_span_id=parent_id,
+                type=span_type,
+                name=span_name,
+                input=_safe_serialize(args, kwargs),
+                metadata=span_metadata,
+                started_at=started_at,
+            )
+            ctx.current_span_id = span_id
+
+            try:
+                result = fn(*args, **kwargs)
+                s.output = _safe_serialize(result)
+                return result
+            except Exception as exc:
+                s.error = {"type": exc.__class__.__name__, "message": str(exc)}
+                raise
+            finally:
+                ctx.current_span_id = parent_id
+                s.ended_at = datetime.now(timezone.utc)
+                s.duration_ms = int((s.ended_at - started_at).total_seconds() * 1000)
+                ctx.spans.append(s)
+
+        return wrapper  # type: ignore[return-value]
+
+    # ── context manager protocol ────────────────────────────────────────────
+
+    def __enter__(self) -> SpanPayload:
+        ctx = _current_trace.get()
+        if ctx is None or _client is None:
+            dummy = SpanPayload(
+                id=uuid.uuid4(),
+                type=self._type,
+                name=self._name or "span",
+                started_at=datetime.now(timezone.utc),
+            )
+            self._span = dummy
+            return dummy
+
+        span_id = uuid.uuid4()
+        self._prev_parent = ctx.current_span_id
+        self._ctx = ctx
+
+        s = SpanPayload(
+            id=span_id,
+            parent_span_id=ctx.current_span_id,
+            type=self._type,
+            name=self._name or "span",
+            input=self._input,
+            metadata=self._metadata,
+            started_at=datetime.now(timezone.utc),
+        )
+        ctx.current_span_id = span_id
+        self._span = s
+        return s
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        s = self._span
+        if s is None:
+            return
+        if exc_val is not None:
+            s.error = {"type": exc_type.__name__, "message": str(exc_val)}
+        ctx = self._ctx
+        if ctx is not None:
+            ctx.current_span_id = self._prev_parent
+            s.ended_at = datetime.now(timezone.utc)
+            s.duration_ms = int((s.ended_at - s.started_at).total_seconds() * 1000)
+            ctx.spans.append(s)
+
+
 def span(
-    name: str,
+    name: str | None = None,
+    *,
     type: str = "function",  # noqa: A002
     input: dict[str, Any] | None = None,  # noqa: A002
     metadata: dict[str, Any] | None = None,
-) -> Generator[SpanPayload, None, None]:
+) -> _SpanHandle:
     """
-    Context manager that records a sub-span within the current trace.
+    Records a sub-span within the current trace.
 
-    Usage:
+    As a decorator (auto-captures args + return value):
+        @loupe.span(type="tool", name="search_movies")
+        def search_movies(query: str) -> list: ...
+
+    As a context manager (set output manually):
         with loupe.span("search_movies", type="tool") as s:
             results = db.search(query)
             s.output = {"count": len(results)}
     """
-    ctx = _current_trace.get()
-    if ctx is None or _client is None:
-        # Outside a trace or Loupe not initialised — yield a dummy span.
-        dummy = SpanPayload(
-            id=uuid.uuid4(),
-            type=type,
-            name=name,
-            started_at=datetime.now(timezone.utc),
-        )
-        yield dummy
-        return
-
-    span_id = uuid.uuid4()
-    parent_id = ctx.current_span_id
-    started_at = datetime.now(timezone.utc)
-
-    s = SpanPayload(
-        id=span_id,
-        parent_span_id=parent_id,
-        type=type,
-        name=name,
-        input=input,
-        metadata=metadata,
-        started_at=started_at,
-    )
-
-    # Set this span as the current parent so nested spans link correctly.
-    ctx.current_span_id = span_id
-
-    try:
-        yield s
-    except Exception as exc:
-        s.error = {
-            "type": exc.__class__.__name__,
-            "message": str(exc),
-        }
-        raise
-    finally:
-        ctx.current_span_id = parent_id  # restore previous parent
-        s.ended_at = datetime.now(timezone.utc)
-        s.duration_ms = int((s.ended_at - started_at).total_seconds() * 1000)
-        ctx.spans.append(s)
+    return _SpanHandle(name=name, type=type, input=input, metadata=metadata)
 
 
 def _safe_serialize(*values: Any) -> dict[str, Any] | None:

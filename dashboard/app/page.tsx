@@ -210,6 +210,7 @@ function formatDate(iso: string): string {
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
+    timeZone: "Asia/Kolkata",
   }).format(new Date(iso));
 }
 
