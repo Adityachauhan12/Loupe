@@ -89,6 +89,12 @@ class Trace(Base):
     replay_of_trace_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("traces.id")
     )
+    branched_from_trace_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("traces.id")
+    )
+    branched_from_span_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("spans.id")
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -100,6 +106,7 @@ class Trace(Base):
 
     __table_args__ = (
         Index("idx_traces_project_started", "project_id", started_at.desc()),
+        Index("idx_traces_branched_from", "branched_from_trace_id"),
     )
 
 
@@ -133,6 +140,9 @@ class Span(Base):
     cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(10, 6))
     extra_metadata: Mapped[dict[str, Any] | None] = mapped_column(
         "metadata", JSONB
+    )
+    replay_policy: Mapped[str] = mapped_column(
+        String(16), server_default="dry_run", nullable=False
     )
 
     trace: Mapped[Trace] = relationship(back_populates="spans")
