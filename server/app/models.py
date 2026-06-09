@@ -93,7 +93,8 @@ class Trace(Base):
         UUID(as_uuid=True), ForeignKey("traces.id")
     )
     branched_from_span_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("spans.id")
+        UUID(as_uuid=True),
+        ForeignKey("spans.id", use_alter=True, name="fk_traces_branched_from_span"),
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -101,7 +102,9 @@ class Trace(Base):
 
     project: Mapped[Project] = relationship(back_populates="traces")
     spans: Mapped[list[Span]] = relationship(
-        back_populates="trace", cascade="all, delete-orphan"
+        back_populates="trace",
+        cascade="all, delete-orphan",
+        foreign_keys="[Span.trace_id]",
     )
 
     __table_args__ = (
@@ -145,7 +148,10 @@ class Span(Base):
         String(16), server_default="dry_run", nullable=False
     )
 
-    trace: Mapped[Trace] = relationship(back_populates="spans")
+    trace: Mapped[Trace] = relationship(
+        back_populates="spans",
+        foreign_keys="[Span.trace_id]",
+    )
 
     __table_args__ = (
         Index("idx_spans_trace", "trace_id"),

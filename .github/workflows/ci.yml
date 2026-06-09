@@ -30,10 +30,25 @@ jobs:
       - name: Test (pytest)
         run: pytest sdk/tests/ -q
 
-  # ── Server: lint ────────────────────────────────────────────────────────
+  # ── Server: lint + test ─────────────────────────────────────────────────
   server:
-    name: Server (lint)
+    name: Server (lint + test)
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: loupe
+          POSTGRES_PASSWORD: loupe
+          POSTGRES_DB: loupe_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U loupe -d loupe_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
       - uses: actions/checkout@v4
@@ -44,11 +59,19 @@ jobs:
           cache: pip
           cache-dependency-path: server/requirements.txt
 
-      - name: Install deps + ruff
-        run: pip install -r server/requirements.txt ruff
+      - name: Install deps + test tooling
+        run: pip install -r server/requirements.txt ruff pytest pytest-asyncio pytest-timeout
 
       - name: Lint (ruff)
         run: ruff check server/app/
+
+      - name: Test (pytest)
+        working-directory: server
+        env:
+          DATABASE_URL: postgresql+asyncpg://loupe:loupe@localhost:5433/loupe_test
+          SECRET_KEY: ci-test-secret
+          ENVIRONMENT: test
+        run: pytest tests/ -q --timeout=60
 
   # ── Dashboard: lint + build ─────────────────────────────────────────────
   dashboard:

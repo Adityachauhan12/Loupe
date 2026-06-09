@@ -41,7 +41,8 @@ _COST_PER_M: dict[str, tuple[float, float]] = {
 
 
 def _estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> Decimal | None:
-    for prefix, (in_rate, out_rate) in _COST_PER_M.items():
+    # Sort longest prefix first so "gpt-4o-mini" matches before "gpt-4o".
+    for prefix, (in_rate, out_rate) in sorted(_COST_PER_M.items(), key=lambda x: -len(x[0])):
         if model.startswith(prefix):
             val = (prompt_tokens * in_rate + completion_tokens * out_rate) / 1_000_000
             return Decimal(str(round(val, 6)))
