@@ -78,6 +78,8 @@ export interface TraceDetail {
   metadata: Record<string, unknown> | null;
   is_replay: boolean;
   replay_of_trace_id: string | null;
+  branched_from_trace_id: string | null;
+  branched_from_span_id: string | null;
   created_at: string;
   spans: SpanOut[];
 }

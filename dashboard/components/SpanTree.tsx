@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from "react";
 import type { SpanOut } from "@/lib/api";
+import { BranchEditor } from "@/components/BranchEditor";
 
 // ── Tree building ──────────────────────────────────────────────────────────
 
@@ -104,12 +105,14 @@ function SpanRow({
   node,
   depth,
   totalMs,
+  traceId,
   expanded,
   onToggle,
 }: {
   node: SpanNode;
   depth: number;
   totalMs: number | null;
+  traceId: string;
   expanded: Set<string>;
   onToggle: (id: string) => void;
 }) {
@@ -174,6 +177,9 @@ function SpanRow({
           {span.input && <JsonBlock label="Input" data={span.input} />}
           {span.output && <JsonBlock label="Output" data={span.output} />}
           {span.error && <JsonBlock label="Error" data={span.error} isError />}
+
+          {/* Time-travel: branch the run from this span */}
+          <BranchEditor traceId={traceId} span={span} />
         </div>
       )}
 
@@ -184,6 +190,7 @@ function SpanRow({
           node={child}
           depth={depth + 1}
           totalMs={totalMs}
+          traceId={traceId}
           expanded={expanded}
           onToggle={onToggle}
         />
@@ -197,9 +204,11 @@ function SpanRow({
 export function SpanTree({
   spans,
   totalMs,
+  traceId,
 }: {
   spans: SpanOut[];
   totalMs: number | null;
+  traceId: string;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
@@ -237,6 +246,7 @@ export function SpanTree({
           node={node}
           depth={0}
           totalMs={totalMs}
+          traceId={traceId}
           expanded={expanded}
           onToggle={onToggle}
         />

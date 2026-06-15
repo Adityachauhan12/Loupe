@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { getTrace, TraceDetail } from "@/lib/api";
 import { SpanTree } from "@/components/SpanTree";
 import { ReplayForm } from "@/components/ReplayForm";
+import { AutoRefresh } from "@/components/AutoRefresh";
 
 export default async function TraceDetailPage({
   params,
@@ -31,12 +32,33 @@ export default async function TraceDetailPage({
           {trace.name ?? trace.id.slice(0, 16)}
         </span>
         <StatusBadge status={trace.status} />
-        {trace.is_replay && (
-          <span className="text-xs text-purple-400 font-medium">replay</span>
+        {trace.branched_from_trace_id ? (
+          <span className="text-xs text-indigo-400 font-medium">⑂ branch</span>
+        ) : (
+          trace.is_replay && (
+            <span className="text-xs text-purple-400 font-medium">replay</span>
+          )
         )}
       </header>
 
       <main className="flex-1 px-6 py-6 max-w-5xl mx-auto w-full space-y-6">
+        {/* Poll while the branch/replay engine is still running */}
+        {trace.status === "running" && <AutoRefresh intervalMs={2500} />}
+
+        {/* Branch lineage */}
+        {trace.branched_from_trace_id && (
+          <div className="flex items-center gap-3 rounded border border-indigo-900/50 bg-indigo-950/20 px-4 py-2 text-xs">
+            <span className="text-indigo-300 font-medium">⑂ Branched run</span>
+            <span className="text-gray-600">·</span>
+            <Link
+              href={`/traces/${trace.branched_from_trace_id}`}
+              className="text-gray-400 hover:text-gray-200 transition-colors"
+            >
+              View original trace →
+            </Link>
+          </div>
+        )}
+
         {/* Meta row */}
         <MetaRow trace={trace} />
 
@@ -60,7 +82,7 @@ export default async function TraceDetailPage({
           <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-widest mb-3">
             Spans ({trace.spans.length})
           </h2>
-          <SpanTree spans={trace.spans} totalMs={trace.duration_ms} />
+          <SpanTree spans={trace.spans} totalMs={trace.duration_ms} traceId={trace.id} />
         </section>
 
         {/* Replay */}

@@ -117,6 +117,8 @@ class TraceDetail(BaseModel):
     metadata: dict[str, Any] | None = Field(default=None, validation_alias="extra_metadata")
     is_replay: bool
     replay_of_trace_id: uuid.UUID | None
+    branched_from_trace_id: uuid.UUID | None
+    branched_from_span_id: uuid.UUID | None
     created_at: datetime
     spans: list[SpanOut]
 

@@ -228,11 +228,41 @@ span-not-in-trace, and auth-required. Full suite: **59 passing**.
 
 ---
 
+## Phase 6 — the dashboard "Branch from here" UI
+
+The frontend wiring that makes the engine usable by a human:
+
+- **`branched_from_trace_id` / `branched_from_span_id`** added to the server
+  `TraceDetail` schema + the `lib/api.ts` type, so the dashboard can recognise a
+  branched run and draw its lineage.
+- **`BranchEditor`** ([`dashboard/components/BranchEditor.tsx`](../dashboard/components/BranchEditor.tsx))
+  — a per-span "⑂ Branch from here" button that opens an inline editor prefilled
+  with the span's output JSON. It validates the JSON **client-side** (instant
+  feedback) before calling the server action.
+- **`createBranch`** server action ([`actions.ts`](../dashboard/app/traces/[id]/actions.ts))
+  — POSTs `{span_id, new_output}` to `/v1/traces/{id}/branch` and redirects to the
+  new trace.
+- **`SpanTree`** now takes a `traceId` and renders the editor inside each
+  expanded span's detail.
+- **Trace detail page** — auto-refreshes (`AutoRefresh`, 2.5s) while the new
+  trace is `running`, and shows a lineage banner ("⑂ Branched run · View original
+  trace →") plus a `⑂ branch` tag in the header.
+
+**Why a server action + redirect (not client fetch):** the API key stays
+server-side (never shipped to the browser), and Next.js handles the redirect to
+the polling page. Same pattern as the existing replay form.
+
+**Verification:** server suite 59/59; dashboard `tsc --noEmit` clean and
+`next build` succeeds with all routes compiling.
+
+---
+
 ## Status
 
-Engine (Phase 4) ✅ and endpoint (Phase 5) ✅ — both done and tested. Next:
-Phase 6 — the dashboard "Branch from here" UI (per-span button → output editor →
-Continue → poll the new trace), then Phase 7 — the branched-vs-original diff view.
+Engine (Phase 4) ✅, endpoint (Phase 5) ✅, dashboard UI (Phase 6) ✅. Next:
+Phase 7 — the branched-vs-original diff view (compare from the branch point
+onward; surface output/token/latency/status deltas), then Track D — record the
+killer demo end-to-end.
 
 ### Follow-up noted during this work
 `replay_policy` currently lives only on the ORM model — it isn't in `SpanIn` or
