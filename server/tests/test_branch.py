@@ -20,7 +20,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models import Replay, Span, Trace
 from app.routers.replays import _effective_policy, _run_branch
-from tests.conftest import make_engine
+from tests.conftest import make_engine, make_span_payload, make_trace_payload
 
 
 # ── _effective_policy classifier ────────────────────────────────────────────────
@@ -279,3 +279,66 @@ async def test_branch_llm_failure_after_branch_marks_error(project, db):
     assert trace.status == "error"
     assert by_name["classify_b"].error["type"] == "RuntimeError"
     assert by_name["classify_b"].output is None
+
+
+# ── POST /v1/traces/{id}/branch endpoint tests ──────────────────────────────────
+# The BackgroundTask (_run_branch) is mocked — its behaviour is covered by the
+# engine tests above. Here we only test the API layer: validation, the
+# placeholder trace, the Replay row, and that the task is scheduled.
+
+async def test_branch_endpoint_creates_placeholder_and_replay(client, db):
+    span = make_span_payload(name="classify", type="llm")
+    trace = make_trace_payload(spans=[span])
+    assert (await client.post("/v1/traces", json=trace)).status_code == 201
+
+    with patch("app.routers.traces._run_branch", new=AsyncMock()) as mock_run:
+        resp = await client.post(
+            f"/v1/traces/{trace['id']}/branch",
+            json={"span_id": span["id"], "new_output": {"content": "fixed"}},
+        )
+
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["replay_id"] and body["new_trace_id"]
+    mock_run.assert_called_once()
+
+    # Placeholder trace is 'running' and linked to the original via lineage cols.
+    new_trace = await db.get(Trace, uuid.UUID(body["new_trace_id"]))
+    assert new_trace.status == "running"
+    assert str(new_trace.branched_from_trace_id) == trace["id"]
+    assert str(new_trace.branched_from_span_id) == span["id"]
+    assert new_trace.is_replay is True
+
+    # Replay row records the edit.
+    replay = await db.get(Replay, uuid.UUID(body["replay_id"]))
+    assert replay.modifications["branch_span_id"] == span["id"]
+    assert replay.modifications["new_output"] == {"content": "fixed"}
+
+
+async def test_branch_endpoint_trace_not_found(client):
+    resp = await client.post(
+        f"/v1/traces/{uuid.uuid4()}/branch",
+        json={"span_id": str(uuid.uuid4()), "new_output": {"x": 1}},
+    )
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "Trace not found"
+
+
+async def test_branch_endpoint_span_not_in_trace(client):
+    trace = make_trace_payload(spans=[make_span_payload(name="a", type="tool")])
+    assert (await client.post("/v1/traces", json=trace)).status_code == 201
+
+    resp = await client.post(
+        f"/v1/traces/{trace['id']}/branch",
+        json={"span_id": str(uuid.uuid4()), "new_output": {"x": 1}},  # span not in trace
+    )
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "Branch span not found in this trace"
+
+
+async def test_branch_endpoint_requires_auth(unauthed_client):
+    resp = await unauthed_client.post(
+        f"/v1/traces/{uuid.uuid4()}/branch",
+        json={"span_id": str(uuid.uuid4()), "new_output": {"x": 1}},
+    )
+    assert resp.status_code == 401

@@ -1,6 +1,8 @@
 import uuid
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+import structlog
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import DataError, IntegrityError
@@ -9,14 +11,19 @@ from sqlalchemy.orm import selectinload
 
 from app.auth import require_api_key
 from app.db import get_db
-from app.models import ApiKey, Span, Trace
+from app.models import ApiKey, Replay, Span, Trace
+from app.routers.replays import _run_branch
 from app.schemas import (
+    BranchCreated,
+    BranchIn,
     TraceCreated,
     TraceDetail,
     TraceIn,
     TraceList,
     TraceListItem,
 )
+
+logger = structlog.get_logger()
 
 router = APIRouter(prefix="/v1/traces", tags=["traces"])
 
@@ -136,3 +143,101 @@ async def get_trace(
         )
 
     return trace
+
+
+@router.post(
+    "/{trace_id}/branch",
+    response_model=BranchCreated,
+    status_code=status.HTTP_201_CREATED,
+)
+async def branch_trace(
+    trace_id: uuid.UUID,
+    payload: BranchIn,
+    background_tasks: BackgroundTasks,
+    api_key: ApiKey = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db),
+) -> BranchCreated:
+    """Branch a trace from a chosen span with an edited output.
+
+    Creates a placeholder ('running') trace linked to the original via the
+    branch lineage columns, records a Replay row for diff metadata, and kicks
+    off the deterministic branch replay as a BackgroundTask. Returns immediately
+    so the dashboard can poll GET /v1/traces/{new_trace_id} for completion.
+    """
+    # 1. Original trace must exist and belong to this project.
+    original = (
+        await db.execute(
+            select(Trace).where(
+                Trace.id == trace_id,
+                Trace.project_id == api_key.project_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if original is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trace not found")
+
+    # 2. Branch span must belong to that trace.
+    branch_span = (
+        await db.execute(
+            select(Span).where(Span.id == payload.span_id, Span.trace_id == trace_id)
+        )
+    ).scalar_one_or_none()
+    if branch_span is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Branch span not found in this trace",
+        )
+
+    now = datetime.now(timezone.utc)
+    new_trace_id = uuid.uuid4()
+    replay_id = uuid.uuid4()
+
+    # 3. Placeholder trace — the engine fills it in. Linked via lineage columns.
+    db.add(
+        Trace(
+            id=new_trace_id,
+            project_id=api_key.project_id,
+            name=f"{original.name or 'trace'} (branch)",
+            status="running",
+            input=original.input,
+            is_replay=True,
+            branched_from_trace_id=original.id,
+            branched_from_span_id=branch_span.id,
+            started_at=now,
+        )
+    )
+    await db.commit()  # commit trace first — FK in replays references it
+
+    # 4. Replay row holds the diff metadata for this branch.
+    db.add(
+        Replay(
+            id=replay_id,
+            original_trace_id=original.id,
+            new_trace_id=new_trace_id,
+            modifications={
+                "branch_span_id": str(branch_span.id),
+                "new_output": payload.new_output,
+            },
+        )
+    )
+    await db.commit()
+
+    logger.info(
+        "branch requested",
+        replay_id=str(replay_id),
+        original_trace_id=str(original.id),
+        new_trace_id=str(new_trace_id),
+        branch_span_id=str(branch_span.id),
+    )
+
+    background_tasks.add_task(
+        _run_branch,
+        replay_id=replay_id,
+        new_trace_id=new_trace_id,
+        original_trace_id=original.id,
+        branch_span_id=branch_span.id,
+        new_output=payload.new_output,
+        project_id=api_key.project_id,
+    )
+
+    return BranchCreated(replay_id=replay_id, new_trace_id=new_trace_id)

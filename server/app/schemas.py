@@ -141,3 +141,15 @@ class ReplayDetail(BaseModel):
     modifications: dict[str, Any] | None
     diff_summary: dict[str, Any] | None
     created_at: datetime
+
+
+class BranchIn(BaseModel):
+    """Request body for POST /v1/traces/{trace_id}/branch."""
+
+    span_id: uuid.UUID
+    new_output: dict[str, Any]
+
+
+class BranchCreated(BaseModel):
+    replay_id: uuid.UUID
+    new_trace_id: uuid.UUID

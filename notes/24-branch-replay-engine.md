@@ -195,11 +195,44 @@ worker.
 
 ---
 
+## Phase 5 — the branch endpoint (the door to the engine)
+
+`POST /v1/traces/{trace_id}/branch` (in
+[`server/app/routers/traces.py`](../server/app/routers/traces.py)) takes
+`{span_id, new_output}` and does four things:
+
+1. Validate the original trace exists + belongs to the caller's project (404 else).
+2. Validate the branch span belongs to that trace (404 else).
+3. Create a placeholder trace (`status="running"`), linked to the original via
+   `branched_from_trace_id` + `branched_from_span_id`, and a `replays` row holding
+   the edit in `modifications`.
+4. Schedule `_run_branch` as a `BackgroundTask` and return `{replay_id,
+   new_trace_id}` immediately.
+
+The dashboard polls `GET /v1/traces/{new_trace_id}` (existing endpoint) until the
+status flips `running → success`/`error`, and reads diff metadata from
+`GET /v1/replays/{replay_id}` — no new GET needed, because a branch *is* a trace
+and *reuses* the replays table.
+
+**Why BackgroundTasks (and the scale answer):** a branch is a slow, retryable job
+(it makes live LLM calls). For one developer, FastAPI's in-process BackgroundTask
+is enough. At real concurrency I'd move it to a queue + workers (Celery/Redis) so
+slow replays don't tie up web workers — same migration path documented for v1
+replay.
+
+**Testing note:** API-layer tests mock `_run_branch` (the engine is tested
+separately) — this also prevents the real BackgroundTask from leaking a pooled
+connection into the next test's event loop (see note 23). 4 endpoint tests:
+success (placeholder + replay row + task scheduled), trace-not-found,
+span-not-in-trace, and auth-required. Full suite: **59 passing**.
+
+---
+
 ## Status
 
-Engine (Phase 4) ✅ done and tested. Next: Phase 5 — the
-`POST /v1/traces/{trace_id}/branch` endpoint that creates the placeholder trace +
-`replays` row and kicks off `_run_branch` as a BackgroundTask.
+Engine (Phase 4) ✅ and endpoint (Phase 5) ✅ — both done and tested. Next:
+Phase 6 — the dashboard "Branch from here" UI (per-span button → output editor →
+Continue → poll the new trace), then Phase 7 — the branched-vs-original diff view.
 
 ### Follow-up noted during this work
 `replay_policy` currently lives only on the ORM model — it isn't in `SpanIn` or
