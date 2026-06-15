@@ -90,6 +90,63 @@ class TestEstimateCost:
         assert cost == Decimal("0.000000")
 
 
+# ── Provider-call hardening ──────────────────────────────────────────────────────
+# Regression tests for two real failures seen in a deployed replay:
+#   - a trailing newline in an API key → "Illegal header value"
+#   - a span with only a system message → Anthropic "at least one message" 400
+
+
+class _FakeResp:
+    is_success = True
+    text = ""
+
+    def json(self):
+        return {"choices": [{"message": {"content": "ok"}}], "usage": {}}
+
+
+async def test_call_groq_strips_key_newline(monkeypatch):
+    from app.routers import replays as R
+
+    captured: dict = {}
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, *, headers, json):
+            captured["headers"] = headers
+            return _FakeResp()
+
+    monkeypatch.setattr(R.httpx, "AsyncClient", FakeClient)
+    monkeypatch.setattr(R.settings, "groq_api_key", "gsk_abc123\n")
+
+    await R._call_groq("llama-3.3-70b-versatile", [{"role": "user", "content": "hi"}])
+
+    auth = captured["headers"]["Authorization"]
+    assert auth == "Bearer gsk_abc123"
+    assert "\n" not in auth
+
+
+async def test_call_anthropic_empty_messages_raises(monkeypatch):
+    from app.routers import replays as R
+
+    monkeypatch.setattr(R.settings, "anthropic_api_key", "sk-ant-test")
+
+    # Only a system message → nothing left after stripping it.
+    with pytest.raises(RuntimeError, match="no .*user/assistant messages"):
+        await R._call_anthropic(
+            "claude-haiku-4-5-20251001",
+            [{"role": "system", "content": "only system"}],
+            None,
+        )
+
+
 # ── API tests ──────────────────────────────────────────────────────────────────
 
 

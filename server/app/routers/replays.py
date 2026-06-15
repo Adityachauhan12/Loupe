@@ -101,7 +101,10 @@ async def _call_openai_compat(
     async with httpx.AsyncClient(timeout=60.0) as client:
         resp = await client.post(
             f"{base_url}/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            # .strip() guards against a trailing newline in the env var (a
+            # common paste error on hosting dashboards) producing an illegal
+            # HTTP header value.
+            headers={"Authorization": f"Bearer {api_key.strip()}", "Content-Type": "application/json"},
             json={"model": model, "messages": messages},
         )
         if not resp.is_success:
@@ -138,6 +141,14 @@ async def _call_anthropic(
             if m.get("role") == "system":
                 system = str(m.get("content", ""))
                 break
+    # Anthropic requires at least one user/assistant message. A span that only
+    # captured a system prompt would otherwise hit a cryptic 400 — fail with a
+    # clear message instead.
+    if not non_system:
+        raise RuntimeError(
+            "Cannot replay against Anthropic: the captured span has no "
+            "user/assistant messages (only a system prompt)."
+        )
     payload: dict[str, Any] = {
         "model": model,
         "max_tokens": 2048,
@@ -149,7 +160,7 @@ async def _call_anthropic(
         resp = await client.post(
             "https://api.anthropic.com/v1/messages",
             headers={
-                "x-api-key": settings.anthropic_api_key,
+                "x-api-key": settings.anthropic_api_key.strip(),
                 "anthropic-version": "2023-06-01",
                 "Content-Type": "application/json",
             },
