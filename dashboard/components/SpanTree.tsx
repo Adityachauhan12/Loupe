@@ -61,6 +61,52 @@ function TypeBadge({ type }: { type: string }) {
   );
 }
 
+// Replay markers the branch engine writes onto span.metadata.
+function spanMarkers(meta: Record<string, unknown> | null) {
+  return {
+    isBranchPoint: meta?.branch_point === true,
+    isDryRun: meta?.dry_run === true,
+    isPassthrough: meta?.replay === "stored_passthrough",
+  };
+}
+
+function MarkerBadges({ meta }: { meta: Record<string, unknown> | null }) {
+  const { isBranchPoint, isDryRun, isPassthrough } = spanMarkers(meta);
+  const badges: { label: string; cls: string; title: string }[] = [];
+  if (isBranchPoint)
+    badges.push({
+      label: "branch point",
+      cls: "bg-indigo-900/60 text-indigo-300",
+      title: "The span you edited — the branch starts here.",
+    });
+  if (isDryRun)
+    badges.push({
+      label: "dry-run",
+      cls: "bg-gray-700/70 text-gray-400",
+      title: "Write skipped during replay — output shows what would have happened.",
+    });
+  if (isPassthrough)
+    badges.push({
+      label: "passthrough",
+      cls: "bg-gray-700/70 text-gray-400",
+      title: "Stored output reused — the server can't re-run this tool live.",
+    });
+  if (badges.length === 0) return null;
+  return (
+    <>
+      {badges.map((b) => (
+        <span
+          key={b.label}
+          title={b.title}
+          className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0 ${b.cls}`}
+        >
+          {b.label}
+        </span>
+      ))}
+    </>
+  );
+}
+
 function DurationBar({
   ms,
   totalMs,
@@ -119,6 +165,7 @@ function SpanRow({
   const { span, children } = node;
   const isExpanded = expanded.has(span.id);
   const hasDetail = !!(span.input || span.output || span.error);
+  const { isDryRun } = spanMarkers(span.metadata);
 
   return (
     <div>
@@ -134,8 +181,11 @@ function SpanRow({
         </span>
 
         <TypeBadge type={span.type} />
+        <MarkerBadges meta={span.metadata} />
 
-        <span className="font-mono text-sm text-gray-200 truncate flex-1">
+        <span
+          className={`font-mono text-sm truncate flex-1 ${isDryRun ? "text-gray-500 italic" : "text-gray-200"}`}
+        >
           {span.name}
         </span>
 
@@ -178,8 +228,8 @@ function SpanRow({
           {span.output && <JsonBlock label="Output" data={span.output} />}
           {span.error && <JsonBlock label="Error" data={span.error} isError />}
 
-          {/* Time-travel: branch the run from this span */}
-          <BranchEditor traceId={traceId} span={span} />
+          {/* Time-travel: branch the run from this span (not from dry-run ghosts) */}
+          {!isDryRun && <BranchEditor traceId={traceId} span={span} />}
         </div>
       )}
 
