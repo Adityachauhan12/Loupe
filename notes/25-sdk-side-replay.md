@@ -114,7 +114,23 @@ can be skipped). Documented, not hidden.
 
 ## Status
 
-SDK-side replay ✅ working and proven live on cinerater. Open follow-ups:
-- A `loupe replay` **CLI** wrapper (v2.3) so it's one command, no script.
+SDK-side replay ✅ working and proven live on cinerater.
+
+**CLI ✅** — `loupe replay` ([`sdk/loupe/cli.py`](../sdk/loupe/cli.py), registered as a
+console script in `pyproject.toml`, SDK bumped to 0.3.0):
+
+```
+loupe replay \
+  --agent examples.cinerater.agent:recommend \
+  --trace <trace_id> --span <span_id> \
+  --output '{"content": "{\"genre\": \"Sci-Fi\", \"year\": 2022}"}'
+```
+
+It imports the agent (running its `loupe.init()` + `instrument_*`), calls
+`loupe.replay()`, then polls until the new trace lands and prints its URL. Proven
+live: editing cinerater's parse step to Sci-Fi/2022 made `search_movies` re-run and
+return *Everything Everywhere All at Once* — propagation through the real tool.
+
+Open follow-up:
 - Dashboard can't trigger this directly (it's in-process) — it would hand the user
-  a copy-paste `loupe.replay(...)` snippet, or this stays a CLI/programmatic flow.
+  a copy-paste `loupe replay ...` command, or this stays a CLI/programmatic flow.
