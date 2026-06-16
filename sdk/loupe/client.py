@@ -65,6 +65,13 @@ class LoupeClient:
             return
         self._queue.put(trace)
 
+    def fetch_trace(self, trace_id: str) -> dict:
+        """Blocking GET of a trace (with spans) — used by replay to load the
+        original run before re-executing it."""
+        resp = self._http.get(f"{self._url}/{trace_id}")
+        resp.raise_for_status()
+        return resp.json()
+
     # ------------------------------------------------------------------
     # Background thread
     # ------------------------------------------------------------------

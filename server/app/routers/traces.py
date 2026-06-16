@@ -50,6 +50,8 @@ async def ingest_trace(
         "extra_metadata": payload.metadata,
         "is_replay": payload.is_replay,
         "replay_of_trace_id": payload.replay_of_trace_id,
+        "branched_from_trace_id": payload.branched_from_trace_id,
+        "branched_from_span_id": payload.branched_from_span_id,
     }
 
     # Idempotent: re-delivery of the same trace id is a no-op.

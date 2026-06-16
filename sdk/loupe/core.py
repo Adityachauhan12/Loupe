@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, TypeVar
 
+import loupe._replay as _replay
 from loupe.client import LoupeClient
 from loupe.models import SpanPayload, TracePayload
 
@@ -59,6 +60,11 @@ def trace(_fn: F | None = None, *, name: str | None = None) -> Any:
             ctx = _TraceContext(trace_id=uuid.uuid4())
             token = _current_trace.set(ctx)
 
+            # If this run is a replay, record where the new trace branched from.
+            rplan = _replay.get_plan()
+            if rplan is not None:
+                rplan.new_trace_id = ctx.trace_id
+
             result = None
             error_info: dict[str, Any] | None = None
             status = "success"
@@ -81,7 +87,7 @@ def trace(_fn: F | None = None, *, name: str | None = None) -> Any:
 
                 payload = TracePayload(
                     id=ctx.trace_id,
-                    name=trace_name,
+                    name=f"{trace_name} (branch)" if rplan is not None else trace_name,
                     status=status,
                     input=_safe_serialize(args, kwargs),
                     output=_safe_serialize(result),
@@ -89,6 +95,9 @@ def trace(_fn: F | None = None, *, name: str | None = None) -> Any:
                     started_at=started_at,
                     ended_at=ended_at,
                     duration_ms=duration_ms,
+                    is_replay=rplan is not None,
+                    branched_from_trace_id=rplan.branched_from_trace_id if rplan else None,
+                    branched_from_span_id=rplan.branched_from_span_id if rplan else None,
                     spans=ctx.spans,
                 )
                 _client.enqueue(payload)
@@ -157,7 +166,14 @@ class _SpanHandle:
             )
             ctx.current_span_id = span_id
 
+            mode, frozen = _replay.begin_span()
             try:
+                if mode in (_replay.FREEZE, _replay.EDIT):
+                    # Don't execute — replay the stored / edited output. Skipping
+                    # the body is what keeps before-branch spans (and writes) safe.
+                    s.output = frozen
+                    s.metadata = _mark_replay(s.metadata, mode)
+                    return _reconstruct_return(frozen)
                 result = fn(*args, **kwargs)
                 s.output = _safe_serialize(result)
                 return result
@@ -165,6 +181,7 @@ class _SpanHandle:
                 s.error = {"type": exc.__class__.__name__, "message": str(exc)}
                 raise
             finally:
+                _replay.end_span()
                 ctx.current_span_id = parent_id
                 s.ended_at = datetime.now(timezone.utc)
                 s.duration_ms = int((s.ended_at - started_at).total_seconds() * 1000)
@@ -201,16 +218,27 @@ class _SpanHandle:
         )
         ctx.current_span_id = span_id
         self._span = s
+        # Classify this span for replay. The body still runs (a `with` block
+        # can't be skipped), but the integration inside it (e.g. the LLM call)
+        # reads current_frozen_output() to short-circuit, and __exit__ pins the
+        # recorded output to the frozen/edited value.
+        self._replay_mode, _ = _replay.begin_span()
         return s
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         s = self._span
         if s is None:
             return
+        decision = _replay.end_span()
         if exc_val is not None:
             s.error = {"type": exc_type.__name__, "message": str(exc_val)}
         ctx = self._ctx
         if ctx is not None:
+            if decision is not None:
+                mode, output = decision
+                if mode in (_replay.FREEZE, _replay.EDIT):
+                    s.output = output
+                    s.metadata = _mark_replay(s.metadata, mode)
             ctx.current_span_id = self._prev_parent
             s.ended_at = datetime.now(timezone.utc)
             s.duration_ms = int((s.ended_at - s.started_at).total_seconds() * 1000)
@@ -237,6 +265,72 @@ def span(
             s.output = {"count": len(results)}
     """
     return _SpanHandle(name=name, type=type, input=input, metadata=metadata)
+
+
+def replay(
+    agent_fn: Callable[..., Any],
+    *,
+    trace_id: str,
+    branch_span_id: str,
+    new_output: dict[str, Any],
+) -> uuid.UUID:
+    """Re-run a traced agent from a branch point with an edited span output.
+
+    Unlike the server-side branch, this runs IN YOUR PROCESS, so your real tool
+    functions execute and the edit propagates downstream. Spans before the branch
+    are frozen (stored outputs), the branch span uses `new_output`, and everything
+    after runs live.
+
+        new_id = loupe.replay(my_agent, trace_id="...", branch_span_id="...",
+                              new_output={"content": "..."})
+
+    Returns the id of the new (branched) trace.
+    """
+    if _client is None:
+        raise RuntimeError("call loupe.init() before loupe.replay()")
+
+    original = _client.fetch_trace(trace_id)
+    spans = sorted(original.get("spans", []), key=lambda s: s["started_at"])
+    branch_index = next(
+        (i for i, s in enumerate(spans) if s["id"] == str(branch_span_id)), None
+    )
+    if branch_index is None:
+        raise ValueError(f"span {branch_span_id} not found in trace {trace_id}")
+
+    plan = _replay._ReplayPlan(
+        stored_outputs=[s.get("output") for s in spans],
+        branch_index=branch_index,
+        new_output=new_output,
+        branched_from_trace_id=uuid.UUID(str(trace_id)),
+        branched_from_span_id=uuid.UUID(str(branch_span_id)),
+    )
+
+    inp = original.get("input") or {}
+    args = inp.get("args", [])
+    kwargs = inp.get("kwargs", {})
+
+    token = _replay.set_plan(plan)
+    try:
+        agent_fn(*args, **kwargs)
+    finally:
+        _replay.reset_plan(token)
+
+    return plan.new_trace_id
+
+
+def _mark_replay(metadata: dict[str, Any] | None, mode: str) -> dict[str, Any]:
+    """Tag a replayed span so the dashboard can show branch-point / frozen badges."""
+    marker = {"branch_point": True} if mode == _replay.EDIT else {"replay": "frozen"}
+    return {**(metadata or {}), **marker}
+
+
+def _reconstruct_return(frozen: dict[str, Any] | None) -> Any:
+    """Best-effort: turn a stored span output back into a function return value.
+    A scalar return was serialized as {"value": x}; unwrap it. Otherwise hand
+    back the recorded dict as-is."""
+    if isinstance(frozen, dict) and set(frozen.keys()) == {"value"}:
+        return frozen["value"]
+    return frozen
 
 
 def _safe_serialize(*values: Any) -> dict[str, Any] | None:

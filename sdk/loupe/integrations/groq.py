@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import functools
+import types
 from decimal import Decimal
 from typing import Any
 
+import loupe._replay as _replay
 from loupe.core import span
 
 # Cost per 1M tokens (input, output). Groq pricing as of May 2026.
@@ -27,6 +29,15 @@ def _estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> De
             cost = (prompt_tokens * input_rate + completion_tokens * output_rate) / 1_000_000
             return Decimal(str(round(cost, 6)))
     return None
+
+
+def _synth_response(output: dict[str, Any]) -> Any:
+    """Build a minimal object shaped like a Groq chat completion, carrying the
+    replayed content, so `response.choices[0].message.content` keeps working."""
+    content = output.get("content") if isinstance(output, dict) else None
+    message = types.SimpleNamespace(content=content)
+    choice = types.SimpleNamespace(message=message)
+    return types.SimpleNamespace(choices=[choice], usage=None)
 
 
 def instrument_groq(client: Any) -> None:
@@ -57,7 +68,14 @@ def instrument_groq(client: Any) -> None:
                 "response_format": kwargs.get("response_format"),
             }
 
-            response = original_create(*args, **kwargs)
+            # Replay: if this LLM span is frozen (before branch) or edited (the
+            # branch point), don't hit the API — synthesize a response from the
+            # stored / edited output so downstream code runs on it.
+            frozen = _replay.current_frozen_output()
+            if frozen is not None:
+                response = _synth_response(frozen)
+            else:
+                response = original_create(*args, **kwargs)
 
             usage = getattr(response, "usage", None)
             if usage:

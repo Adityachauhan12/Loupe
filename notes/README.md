@@ -27,3 +27,4 @@ Each file here covers one item from the CLAUDE.md build checklist. For every mea
 - [Item 22 — v2 Replay Engine: Design (time-travel debugger)](22-v2-replay-engine-design.md)
 - [Item 23 — Server test suite (+ the async testing rabbit hole)](23-server-test-suite.md)
 - [Item 24 — Branch replay engine (the heart of v2)](24-branch-replay-engine.md)
+- [Item 25 — SDK-side replay (making the edit actually propagate)](25-sdk-side-replay.md)

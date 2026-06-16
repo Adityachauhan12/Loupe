@@ -43,4 +43,6 @@ class TracePayload(BaseModel):
     metadata: dict[str, Any] | None = None
     is_replay: bool = False
     replay_of_trace_id: uuid.UUID | None = None
+    branched_from_trace_id: uuid.UUID | None = None
+    branched_from_span_id: uuid.UUID | None = None
     spans: list[SpanPayload] = Field(default_factory=list)
