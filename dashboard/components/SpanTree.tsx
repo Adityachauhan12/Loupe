@@ -1,8 +1,15 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import Link from "next/link";
+import { AnimatePresence, motion } from "framer-motion";
+import { ChevronRight, AlertTriangle, CornerDownRight, ArrowRight } from "lucide-react";
 import type { SpanOut } from "@/lib/api";
 import { BranchEditor } from "@/components/BranchEditor";
+import { TypeBadge, MarkerBadges } from "@/components/badges";
+import { CodeBlock } from "@/components/CodeBlock";
+import { formatDuration } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 // ── Tree building ──────────────────────────────────────────────────────────
 
@@ -29,39 +36,13 @@ function buildTree(spans: SpanOut[]): SpanNode[] {
   return roots;
 }
 
-// ── Utilities ──────────────────────────────────────────────────────────────
-
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(2)}s`;
-}
-
-const TYPE_STYLES: Record<string, string> = {
-  llm: "bg-purple-900/60 text-purple-300",
-  tool: "bg-blue-900/60 text-blue-300",
-  function: "bg-gray-700 text-gray-300",
-  retrieval: "bg-amber-900/60 text-amber-300",
+const BAR_COLOR: Record<string, string> = {
+  llm: "bg-llm",
+  tool: "bg-tool",
+  function: "bg-fn",
+  retrieval: "bg-retrieval",
 };
 
-const TYPE_LABELS: Record<string, string> = {
-  llm: "llm",
-  tool: "tool",
-  function: "fn",
-  retrieval: "ret",
-};
-
-// ── Components ─────────────────────────────────────────────────────────────
-
-function TypeBadge({ type }: { type: string }) {
-  const cls = TYPE_STYLES[type] ?? "bg-gray-700 text-gray-300";
-  return (
-    <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold shrink-0 ${cls}`}>
-      {TYPE_LABELS[type] ?? type}
-    </span>
-  );
-}
-
-// Replay markers the branch engine writes onto span.metadata.
 function spanMarkers(meta: Record<string, unknown> | null) {
   return {
     isBranchPoint: meta?.branch_point === true,
@@ -70,79 +51,25 @@ function spanMarkers(meta: Record<string, unknown> | null) {
   };
 }
 
-function MarkerBadges({ meta }: { meta: Record<string, unknown> | null }) {
-  const { isBranchPoint, isDryRun, isPassthrough } = spanMarkers(meta);
-  const badges: { label: string; cls: string; title: string }[] = [];
-  if (isBranchPoint)
-    badges.push({
-      label: "branch point",
-      cls: "bg-indigo-900/60 text-indigo-300",
-      title: "The span you edited — the branch starts here.",
-    });
-  if (isDryRun)
-    badges.push({
-      label: "dry-run",
-      cls: "bg-gray-700/70 text-gray-400",
-      title: "Write skipped during replay — output shows what would have happened.",
-    });
-  if (isPassthrough)
-    badges.push({
-      label: "passthrough",
-      cls: "bg-gray-700/70 text-gray-400",
-      title: "Stored output reused — the server can't re-run this tool live.",
-    });
-  if (badges.length === 0) return null;
-  return (
-    <>
-      {badges.map((b) => (
-        <span
-          key={b.label}
-          title={b.title}
-          className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0 ${b.cls}`}
-        >
-          {b.label}
-        </span>
-      ))}
-    </>
-  );
-}
+// ── Components ─────────────────────────────────────────────────────────────
 
 function DurationBar({
   ms,
   totalMs,
+  type,
 }: {
   ms: number | null;
   totalMs: number | null;
+  type: string;
 }) {
-  if (!ms || !totalMs) return <div className="w-20" />;
-  const pct = Math.min(100, (ms / totalMs) * 100);
+  if (!ms || !totalMs) return <div className="hidden w-20 sm:block" />;
+  const pct = Math.max(2, Math.min(100, (ms / totalMs) * 100));
   return (
-    <div className="w-20 h-1.5 rounded-full bg-gray-800 shrink-0">
+    <div className="hidden h-1.5 w-20 shrink-0 overflow-hidden rounded-full bg-surface-2 sm:block">
       <div
-        className="h-full rounded-full bg-gray-500"
+        className={cn("h-full rounded-full", BAR_COLOR[type] ?? "bg-fn")}
         style={{ width: `${pct}%` }}
       />
-    </div>
-  );
-}
-
-function JsonBlock({
-  label,
-  data,
-  isError,
-}: {
-  label: string;
-  data: Record<string, unknown>;
-  isError?: boolean;
-}) {
-  return (
-    <div className="mt-1">
-      <span className={`text-[10px] font-semibold uppercase tracking-widest ${isError ? "text-red-500" : "text-gray-600"}`}>
-        {label}
-      </span>
-      <pre className={`mt-1 text-xs rounded p-2 overflow-x-auto whitespace-pre-wrap break-words max-h-48 overflow-y-auto ${isError ? "bg-red-950/40 text-red-300" : "bg-gray-900 text-gray-300"}`}>
-        {JSON.stringify(data, null, 2)}
-      </pre>
     </div>
   );
 }
@@ -152,6 +79,8 @@ function SpanRow({
   depth,
   totalMs,
   traceId,
+  maxStart,
+  replayHref,
   expanded,
   onToggle,
 }: {
@@ -159,79 +88,130 @@ function SpanRow({
   depth: number;
   totalMs: number | null;
   traceId: string;
+  maxStart: number;
+  replayHref?: string;
   expanded: Set<string>;
   onToggle: (id: string) => void;
 }) {
   const { span, children } = node;
   const isExpanded = expanded.has(span.id);
   const hasDetail = !!(span.input || span.output || span.error);
-  const { isDryRun } = spanMarkers(span.metadata);
+  const hasError = !!span.error;
+  const { isDryRun, isBranchPoint } = spanMarkers(span.metadata);
+  // Branching only matters when something runs after this span.
+  const canBranch = new Date(span.started_at).getTime() < maxStart;
 
   return (
     <div>
       {/* Row */}
       <div
+        role={hasDetail ? "button" : undefined}
+        tabIndex={hasDetail ? 0 : undefined}
+        aria-expanded={hasDetail ? isExpanded : undefined}
         onClick={() => hasDetail && onToggle(span.id)}
-        className={`flex items-center gap-2 py-2 pr-4 border-b border-gray-800/50 transition-colors ${hasDetail ? "cursor-pointer hover:bg-gray-900/60" : ""}`}
-        style={{ paddingLeft: `${depth * 20 + 12}px` }}
+        onKeyDown={(e) => {
+          if (hasDetail && (e.key === "Enter" || e.key === " ")) {
+            e.preventDefault();
+            onToggle(span.id);
+          }
+        }}
+        style={{ paddingLeft: `${depth * 18 + 12}px` }}
+        className={cn(
+          "flex items-center gap-2 border-b border-line/50 py-2 pr-3 transition-colors",
+          hasDetail && "cursor-pointer hover:bg-surface-2/60 focus-visible:bg-surface-2/60",
+          hasError && "bg-error-dim/15 hover:bg-error-dim/25",
+          isBranchPoint && "bg-primary-soft/15",
+        )}
       >
-        {/* Expand indicator */}
-        <span className="text-gray-700 text-xs w-3 shrink-0">
-          {hasDetail ? (isExpanded ? "▾" : "▸") : " "}
-        </span>
+        <ChevronRight
+          className={cn(
+            "size-3.5 shrink-0 text-faint transition-transform",
+            !hasDetail && "opacity-0",
+            isExpanded && "rotate-90",
+          )}
+        />
 
         <TypeBadge type={span.type} />
         <MarkerBadges meta={span.metadata} />
+        {hasError && <AlertTriangle className="size-3.5 shrink-0 text-error" />}
 
         <span
-          className={`font-mono text-sm truncate flex-1 ${isDryRun ? "text-gray-500 italic" : "text-gray-200"}`}
+          className={cn(
+            "flex-1 truncate font-mono text-sm",
+            hasError ? "text-error" : isDryRun ? "italic text-faint" : "text-fg",
+          )}
         >
           {span.name}
         </span>
 
-        {/* LLM tokens / cost */}
         {span.total_tokens != null && (
-          <span className="text-xs text-gray-500 tabular-nums shrink-0">
+          <span className="hidden shrink-0 text-xs tabular-nums text-faint sm:inline">
             {span.total_tokens} tok
           </span>
         )}
         {span.cost_usd != null && (
-          <span className="text-xs text-gray-600 tabular-nums font-mono shrink-0">
+          <span className="hidden shrink-0 font-mono text-xs tabular-nums text-faint md:inline">
             ${Number(span.cost_usd).toFixed(4)}
           </span>
         )}
 
-        {/* Duration bar + label */}
-        <DurationBar ms={span.duration_ms} totalMs={totalMs} />
-        <span className="text-xs text-gray-500 tabular-nums font-mono w-14 text-right shrink-0">
-          {span.duration_ms != null ? formatDuration(span.duration_ms) : "—"}
+        <DurationBar ms={span.duration_ms} totalMs={totalMs} type={span.type} />
+        <span className="w-14 shrink-0 text-right font-mono text-xs tabular-nums text-muted">
+          {formatDuration(span.duration_ms)}
         </span>
       </div>
 
       {/* Expanded detail */}
-      {isExpanded && (
-        <div
-          className="pb-3 border-b border-gray-800/50"
-          style={{ paddingLeft: `${depth * 20 + 12 + 28}px`, paddingRight: "16px" }}
-        >
-          {span.model && (
-            <p className="text-[11px] text-gray-500 mt-1">
-              {span.provider} / {span.model}
-              {span.prompt_tokens != null && (
-                <span className="ml-2">
-                  {span.prompt_tokens} in + {span.completion_tokens} out
-                </span>
+      <AnimatePresence initial={false}>
+        {isExpanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.22, ease: "easeOut" }}
+            className="overflow-hidden border-b border-line/50 bg-bg/40"
+          >
+            <div
+              className="space-y-3 py-3 pr-4"
+              style={{ paddingLeft: `${depth * 18 + 38}px` }}
+            >
+              {span.model && (
+                <p className="text-[11px] text-muted">
+                  <span className="text-faint">{span.provider} / </span>
+                  <span className="font-mono">{span.model}</span>
+                  {span.prompt_tokens != null && (
+                    <span className="ml-2 text-faint">
+                      {span.prompt_tokens} in + {span.completion_tokens} out
+                    </span>
+                  )}
+                </p>
               )}
-            </p>
-          )}
-          {span.input && <JsonBlock label="Input" data={span.input} />}
-          {span.output && <JsonBlock label="Output" data={span.output} />}
-          {span.error && <JsonBlock label="Error" data={span.error} isError />}
+              {span.input && (
+                <Detail label="Input">
+                  <CodeBlock data={span.input} collapsedHeight={180} />
+                </Detail>
+              )}
+              {span.output && (
+                <Detail label="Output">
+                  <CodeBlock data={span.output} collapsedHeight={180} />
+                </Detail>
+              )}
+              {span.error && (
+                <Detail label="Error" error>
+                  <CodeBlock data={span.error} isError collapsedHeight={180} />
+                </Detail>
+              )}
 
-          {/* Time-travel: branch the run from this span (not from dry-run ghosts) */}
-          {!isDryRun && <BranchEditor traceId={traceId} span={span} />}
-        </div>
-      )}
+              {!isDryRun &&
+                (canBranch ? (
+                  <BranchEditor traceId={traceId} span={span} />
+                ) : (
+                  <TerminalHint replayHref={replayHref} />
+                ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Children */}
       {children.map((child) => (
@@ -241,10 +221,56 @@ function SpanRow({
           depth={depth + 1}
           totalMs={totalMs}
           traceId={traceId}
+          maxStart={maxStart}
+          replayHref={replayHref}
           expanded={expanded}
           onToggle={onToggle}
         />
       ))}
+    </div>
+  );
+}
+
+/** Shown on terminal spans: editing their output changes nothing downstream,
+ *  so we point the user at Replay (which re-runs from a new prompt/model). */
+function TerminalHint({ replayHref }: { replayHref?: string }) {
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-line bg-surface-2/50 px-3 py-2 text-[11px] text-faint">
+      <CornerDownRight className="size-3.5 shrink-0" />
+      <span>Nothing runs after this span — editing its output changes nothing.</span>
+      {replayHref && (
+        <Link
+          href={replayHref}
+          className="inline-flex items-center gap-1 font-medium text-primary transition-colors hover:text-accent"
+        >
+          Replay with a new prompt
+          <ArrowRight className="size-3" />
+        </Link>
+      )}
+    </div>
+  );
+}
+
+function Detail({
+  label,
+  error,
+  children,
+}: {
+  label: string;
+  error?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="space-y-1">
+      <p
+        className={cn(
+          "text-[10px] font-semibold uppercase tracking-[0.12em]",
+          error ? "text-error" : "text-faint",
+        )}
+      >
+        {label}
+      </p>
+      {children}
     </div>
   );
 }
@@ -255,10 +281,13 @@ export function SpanTree({
   spans,
   totalMs,
   traceId,
+  replayHref,
 }: {
   spans: SpanOut[];
   totalMs: number | null;
   traceId: string;
+  /** Anchor to the replay form, shown to terminal spans where branching is a no-op. */
+  replayHref?: string;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
@@ -273,21 +302,30 @@ export function SpanTree({
 
   const roots = buildTree(spans);
 
+  // A span is branchable only if something executes *after* it — editing the
+  // output of a terminal span (the last thing to run) changes nothing downstream.
+  const maxStart = Math.max(
+    0,
+    ...spans.map((s) => new Date(s.started_at).getTime()),
+  );
+
   if (roots.length === 0) {
-    return <p className="text-gray-600 text-sm py-4">No spans recorded.</p>;
+    return (
+      <div className="rounded-xl border border-line bg-surface/60 py-10 text-center text-sm text-faint">
+        No spans recorded.
+      </div>
+    );
   }
 
   return (
-    <div className="rounded border border-gray-800 overflow-hidden">
+    <div className="overflow-hidden rounded-xl border border-line bg-surface/50">
       {/* Header row */}
-      <div className="flex items-center gap-2 px-3 py-2 bg-gray-900 border-b border-gray-800 text-[10px] text-gray-600 uppercase tracking-widest font-semibold">
-        <span className="w-3" />
-        <span className="w-12">Type</span>
-        <span className="flex-1">Name</span>
-        <span className="w-16 text-right">Tokens</span>
-        <span className="w-16 text-right">Cost</span>
-        <span className="w-20">Bar</span>
-        <span className="w-14 text-right">Duration</span>
+      <div className="flex items-center gap-2 border-b border-line bg-surface-2/60 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-faint">
+        <span className="w-3.5" />
+        <span>Span</span>
+        <span className="flex-1" />
+        <span className="hidden w-20 sm:inline">Latency</span>
+        <span className="w-14 text-right">Time</span>
       </div>
 
       {roots.map((node) => (
@@ -297,6 +335,8 @@ export function SpanTree({
           depth={0}
           totalMs={totalMs}
           traceId={traceId}
+          maxStart={maxStart}
+          replayHref={replayHref}
           expanded={expanded}
           onToggle={onToggle}
         />

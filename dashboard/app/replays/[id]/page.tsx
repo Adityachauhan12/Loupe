@@ -1,8 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Loader2, Repeat } from "lucide-react";
 import { getReplay, getTrace, TraceDetail } from "@/lib/api";
 import { ReplayDiff } from "@/components/ReplayDiff";
 import { AutoRefresh } from "@/components/AutoRefresh";
+import { TopBar } from "@/components/TopBar";
+import { Reveal } from "@/components/motion";
 
 export default async function ReplayDiffPage({
   params,
@@ -19,10 +22,7 @@ export default async function ReplayDiffPage({
     notFound();
   }
 
-  // Replay still running — show waiting state
-  if (!replay.new_trace_id) {
-    return <WaitingPage replayId={id} />;
-  }
+  if (!replay.new_trace_id) return <WaitingPage />;
 
   try {
     [original, replayTrace] = await Promise.all([
@@ -34,52 +34,54 @@ export default async function ReplayDiffPage({
     notFound();
   }
 
-  if (replayTrace.status === "running") {
-    return <WaitingPage replayId={id} />;
-  }
+  if (replayTrace.status === "running") return <WaitingPage />;
 
   return (
-    <div className="min-h-screen flex flex-col">
-      <header className="border-b border-gray-800 px-6 py-4 flex items-center gap-4">
-        <Link
-          href={`/traces/${replay.original_trace_id}`}
-          className="text-gray-500 hover:text-gray-200 transition-colors text-sm"
-        >
-          ← Original trace
-        </Link>
-        <span className="text-gray-700">/</span>
-        <span className="text-sm text-gray-300">Replay diff</span>
-        <Link
-          href={`/traces/${replay.new_trace_id}`}
-          className="ml-auto text-xs text-gray-600 hover:text-gray-400 transition-colors"
-        >
-          View replay trace →
-        </Link>
-      </header>
-
-      <main className="flex-1 px-6 py-6 max-w-6xl mx-auto w-full space-y-4">
-        <h1 className="text-xl font-bold">Replay Diff</h1>
-        <ReplayDiff
-          original={original}
-          replay={replayTrace}
-          modifications={replay.modifications}
-        />
+    <div className="min-h-dvh">
+      <TopBar
+        back={{ label: "Original trace", href: `/traces/${replay.original_trace_id}` }}
+        crumbs={[{ label: "Replay diff" }]}
+        right={
+          <Link
+            href={`/traces/${replay.new_trace_id}`}
+            className="text-xs text-muted transition-colors hover:text-fg"
+          >
+            View replay trace →
+          </Link>
+        }
+      />
+      <main className="mx-auto w-full max-w-6xl space-y-4 px-5 py-7">
+        <Reveal>
+          <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight">
+            <Repeat className="size-6 text-accent" />
+            Replay Diff
+          </h1>
+          <p className="mt-1 text-sm text-muted">
+            Original vs replayed run — what changed when you tweaked the prompt or model.
+          </p>
+        </Reveal>
+        <Reveal index={1}>
+          <ReplayDiff
+            original={original}
+            replay={replayTrace}
+            modifications={replay.modifications}
+          />
+        </Reveal>
       </main>
     </div>
   );
 }
 
-function WaitingPage({ replayId }: { replayId: string }) {
+function WaitingPage() {
   return (
-    <div className="min-h-screen flex flex-col">
-      <header className="border-b border-gray-800 px-6 py-4">
-        <span className="text-sm text-gray-500">Replay diff</span>
-      </header>
-      <main className="flex-1 flex items-center justify-center">
-        <div className="text-center space-y-3">
-          <div className="text-amber-400 text-sm font-medium">Replay in progress…</div>
-          <p className="text-gray-600 text-xs">
-            The LLM is running. This page will refresh automatically.
+    <div className="min-h-dvh">
+      <TopBar crumbs={[{ label: "Replay diff" }]} />
+      <main className="flex min-h-[60vh] items-center justify-center px-5">
+        <div className="space-y-3 text-center">
+          <Loader2 className="mx-auto size-7 animate-spin text-warning" />
+          <p className="text-sm font-medium text-warning">Replay in progress…</p>
+          <p className="text-xs text-muted">
+            The LLM is running. This page refreshes automatically.
           </p>
           <AutoRefresh intervalMs={3000} />
         </div>

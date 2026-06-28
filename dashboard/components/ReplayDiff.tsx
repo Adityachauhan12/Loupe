@@ -1,27 +1,18 @@
+import {
+  CheckCircle2,
+  XCircle,
+  Repeat,
+  Cpu,
+  FileText,
+  Zap,
+  Coins,
+  Clock,
+} from "lucide-react";
 import type { TraceDetail, SpanOut } from "@/lib/api";
-
-// ── Helpers ────────────────────────────────────────────────────────────────
-
-function fmt(ms: number): string {
-  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(2)}s`;
-}
-
-function delta(n: number, unit: string, invert = false): React.ReactNode {
-  if (n === 0) return <span className="text-gray-500">±0{unit}</span>;
-  const negative = invert ? n > 0 : n < 0;
-  const sign = n > 0 ? "+" : "";
-  return (
-    <span className={negative ? "text-green-400" : "text-red-400"}>
-      {sign}{n}{unit}
-    </span>
-  );
-}
-
-function pct(a: number, b: number): string {
-  if (b === 0) return "";
-  const p = Math.round(((a - b) / b) * 100);
-  return ` (${p > 0 ? "+" : ""}${p}%)`;
-}
+import { StatusBadge } from "@/components/badges";
+import { TextDiff } from "@/components/TextDiff";
+import { formatDuration, formatTokens, formatCost } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 function llmSpans(trace: TraceDetail): SpanOut[] {
   return trace.spans
@@ -29,106 +20,85 @@ function llmSpans(trace: TraceDetail): SpanOut[] {
     .sort((a, b) => new Date(a.started_at).getTime() - new Date(b.started_at).getTime());
 }
 
-// ── Sub-components ─────────────────────────────────────────────────────────
-
 function TraceCard({ trace, label }: { trace: TraceDetail; label: string }) {
-  const statusColor: Record<string, string> = {
-    success: "text-green-400",
-    error: "text-red-400",
-    running: "text-amber-400",
-  };
-
-  const llm = llmSpans(trace);
-  const model = llm[0]?.model ?? "—";
-  const provider = llm[0]?.provider ?? "—";
-
+  const llm = llmSpans(trace)[0];
   return (
-    <div className="flex-1 min-w-0">
-      <p className="text-[10px] text-gray-600 uppercase tracking-widest font-semibold mb-2">
-        {label}
-      </p>
-      <div className="space-y-1 text-sm">
-        <p className="font-mono text-gray-300 truncate">{trace.name ?? trace.id.slice(0, 16)}</p>
-        <p>
-          <span className={statusColor[trace.status ?? ""] ?? "text-gray-400"}>
-            {trace.status ?? "unknown"}
-          </span>
-          {trace.duration_ms != null && (
-            <span className="text-gray-500 ml-2">{fmt(trace.duration_ms)}</span>
-          )}
-        </p>
-        <p className="text-gray-500 text-xs font-mono">{provider} / {model}</p>
-        <p className="text-gray-500 text-xs tabular-nums">
-          {trace.total_tokens != null ? `${trace.total_tokens.toLocaleString()} tokens` : "—"}
-          {trace.total_cost_usd != null && (
-            <span className="ml-2">${Number(trace.total_cost_usd).toFixed(4)}</span>
-          )}
-        </p>
+    <div className="min-w-0 flex-1 space-y-2">
+      <div className="flex items-center justify-between">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-faint">{label}</p>
+        <StatusBadge status={trace.status} />
       </div>
+      <p className="truncate font-mono text-sm text-fg">{trace.name ?? trace.id.slice(0, 16)}</p>
+      {llm && (
+        <p className="truncate font-mono text-xs text-faint">
+          {llm.provider} / {llm.model}
+        </p>
+      )}
+      <p className="text-xs tabular-nums text-faint">
+        {formatTokens(trace.total_tokens)} tokens · {formatCost(trace.total_cost_usd)} ·{" "}
+        {formatDuration(trace.duration_ms)}
+      </p>
     </div>
   );
 }
 
-function DeltaRow({
+function StatusChangeBanner({
   original,
   replay,
 }: {
   original: TraceDetail;
   replay: TraceDetail;
 }) {
-  const tokDelta = (replay.total_tokens ?? 0) - (original.total_tokens ?? 0);
-  const latDelta = (replay.duration_ms ?? 0) - (original.duration_ms ?? 0);
-  const costDelta =
-    Number(replay.total_cost_usd ?? 0) - Number(original.total_cost_usd ?? 0);
-
+  if (original.status === replay.status) return null;
+  const fixed = original.status === "error" && replay.status === "success";
+  const broke = original.status === "success" && replay.status === "error";
+  const cls = fixed
+    ? "from-success/20 to-transparent border-success/30 text-success"
+    : broke
+      ? "from-error/20 to-transparent border-error/30 text-error"
+      : "from-surface-2 to-transparent border-line text-muted";
+  const Icon = fixed ? CheckCircle2 : broke ? XCircle : Repeat;
+  const headline = fixed ? "Replay fixed the run" : broke ? "Replay broke the run" : "Status changed";
   return (
-    <div className="flex flex-wrap gap-6 px-4 py-3 bg-gray-900/60 border-y border-gray-800 text-sm">
-      <div>
-        <span className="text-gray-600 text-xs uppercase tracking-widest mr-2">Δ tokens</span>
-        {delta(tokDelta, "", true)}
-        <span className="text-gray-600 text-xs ml-1">
-          {pct(replay.total_tokens ?? 0, original.total_tokens ?? 1)}
-        </span>
-      </div>
-      <div>
-        <span className="text-gray-600 text-xs uppercase tracking-widest mr-2">Δ cost</span>
-        {delta(parseFloat(costDelta.toFixed(6)), "$", true)}
-      </div>
-      <div>
-        <span className="text-gray-600 text-xs uppercase tracking-widest mr-2">Δ latency</span>
-        {delta(latDelta, "ms", true)}
-        <span className="text-gray-600 text-xs ml-1">
-          {pct(replay.duration_ms ?? 0, original.duration_ms ?? 1)}
-        </span>
-      </div>
+    <div className={cn("flex items-center gap-2.5 border-b bg-gradient-to-r px-4 py-3", cls)}>
+      <Icon className="size-5 shrink-0" />
+      <span className="text-sm font-semibold">{headline}</span>
+      <span className="ml-1 font-mono text-xs opacity-80">
+        {original.status} → {replay.status}
+      </span>
     </div>
   );
 }
 
-function OutputBlock({ span }: { span: SpanOut | undefined }) {
-  if (!span)
-    return <p className="text-gray-700 text-xs italic">No LLM span</p>;
-
-  const content =
-    (span.output?.content as string | undefined) ??
-    JSON.stringify(span.output, null, 2);
-
-  if (span.error) {
-    return (
-      <pre className="text-xs text-red-400 bg-red-950/30 rounded p-3 whitespace-pre-wrap break-words max-h-64 overflow-y-auto">
-        {JSON.stringify(span.error, null, 2)}
-      </pre>
+function DeltaStat({
+  icon: Icon,
+  label,
+  value,
+  unit,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  value: number;
+  unit: string;
+}) {
+  const node =
+    value === 0 ? (
+      <span className="text-faint">±0{unit}</span>
+    ) : (
+      <span className={value < 0 ? "text-success" : "text-error"}>
+        {value > 0 ? "+" : ""}
+        {value}
+        {unit}
+      </span>
     );
-  }
-
   return (
-    <pre className="text-xs text-gray-300 bg-gray-900 rounded p-3 whitespace-pre-wrap break-words max-h-64 overflow-y-auto border border-gray-800">
-      {content}
-    </pre>
+    <div className="flex items-center gap-2">
+      <Icon className="size-3.5 text-faint" />
+      <span className="text-[10px] uppercase tracking-[0.12em] text-faint">{label}</span>
+      <span className="font-mono text-sm tabular-nums">{node}</span>
+    </div>
   );
 }
-
-// ── Public export ──────────────────────────────────────────────────────────
 
 export function ReplayDiff({
   original,
@@ -143,62 +113,74 @@ export function ReplayDiff({
   const repLLM = llmSpans(replay);
   const maxSpans = Math.max(origLLM.length, repLLM.length);
 
+  const tokenDelta = (replay.total_tokens ?? 0) - (original.total_tokens ?? 0);
+  const latencyDelta = (replay.duration_ms ?? 0) - (original.duration_ms ?? 0);
+  const costDelta = Number(replay.total_cost_usd ?? 0) - Number(original.total_cost_usd ?? 0);
+
   return (
-    <div className="rounded border border-gray-800 overflow-hidden">
+    <div className="overflow-hidden rounded-xl border border-line bg-surface/50">
       {/* Modifications banner */}
       {(modifications?.prompt_override || modifications?.model_override) && (
-        <div className="px-4 py-3 bg-indigo-950/40 border-b border-indigo-900/40 text-xs space-y-1">
+        <div className="space-y-1.5 border-b border-line bg-primary-soft/20 px-4 py-3 text-xs">
           {modifications.model_override && (
-            <p>
-              <span className="text-indigo-400 font-semibold">Model override: </span>
-              <span className="font-mono text-gray-300">{modifications.model_override}</span>
+            <p className="flex items-center gap-2">
+              <Cpu className="size-3.5 text-primary" />
+              <span className="font-semibold text-primary">Model:</span>
+              <span className="font-mono text-muted">{modifications.model_override}</span>
             </p>
           )}
           {modifications.prompt_override && (
-            <p>
-              <span className="text-indigo-400 font-semibold">Prompt override: </span>
-              <span className="text-gray-300 italic truncate">
-                {modifications.prompt_override.slice(0, 120)}
-                {modifications.prompt_override.length > 120 ? "…" : ""}
+            <p className="flex items-start gap-2">
+              <FileText className="mt-0.5 size-3.5 shrink-0 text-primary" />
+              <span className="shrink-0 font-semibold text-primary">Prompt:</span>
+              <span className="line-clamp-2 italic text-muted">
+                {modifications.prompt_override}
               </span>
             </p>
           )}
         </div>
       )}
 
-      {/* Header row */}
-      <div className="grid grid-cols-2 divide-x divide-gray-800 border-b border-gray-800">
-        <div className="p-4">
-          <TraceCard trace={original} label="Original" />
-        </div>
-        <div className="p-4">
+      <StatusChangeBanner original={original} replay={replay} />
+
+      {/* Trace summaries */}
+      <div className="grid gap-4 border-b border-line p-4 sm:grid-cols-2 sm:divide-x sm:divide-line">
+        <TraceCard trace={original} label="Original" />
+        <div className="sm:pl-4">
           <TraceCard trace={replay} label="Replay" />
         </div>
       </div>
 
-      {/* Delta summary */}
-      <DeltaRow original={original} replay={replay} />
+      {/* Deltas */}
+      <div className="flex flex-wrap gap-x-6 gap-y-2 border-b border-line bg-surface-2/40 px-4 py-3">
+        <DeltaStat icon={Zap} label="Δ tokens" value={tokenDelta} unit="" />
+        <DeltaStat icon={Coins} label="Δ cost" value={parseFloat(costDelta.toFixed(6))} unit="$" />
+        <DeltaStat icon={Clock} label="Δ latency" value={latencyDelta} unit="ms" />
+      </div>
 
-      {/* LLM output pairs */}
+      {/* LLM output diffs */}
       {maxSpans === 0 ? (
-        <p className="text-gray-600 text-sm px-4 py-6 text-center">No LLM spans to compare.</p>
+        <p className="px-4 py-8 text-center text-sm text-faint">No LLM spans to compare.</p>
       ) : (
-        Array.from({ length: maxSpans }).map((_, i) => (
-          <div key={i} className="grid grid-cols-2 divide-x divide-gray-800 border-t border-gray-800">
-            <div className="p-4">
-              <p className="text-[10px] text-gray-600 uppercase tracking-widest font-semibold mb-2">
-                LLM output {maxSpans > 1 ? `#${i + 1}` : ""}
-              </p>
-              <OutputBlock span={origLLM[i]} />
+        Array.from({ length: maxSpans }).map((_, i) => {
+          const o = origLLM[i];
+          const r = repLLM[i];
+          return (
+            <div key={i} className="border-t border-line p-4">
+              {maxSpans > 1 && (
+                <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-faint">
+                  LLM output #{i + 1}
+                </p>
+              )}
+              <TextDiff
+                original={r?.error ?? o?.error ?? o?.output}
+                modified={r?.error ?? r?.output}
+                originalLabel="Original output"
+                modifiedLabel="Replay output"
+              />
             </div>
-            <div className="p-4">
-              <p className="text-[10px] text-gray-600 uppercase tracking-widest font-semibold mb-2">
-                LLM output {maxSpans > 1 ? `#${i + 1}` : ""}
-              </p>
-              <OutputBlock span={repLLM[i]} />
-            </div>
-          </div>
-        ))
+          );
+        })
       )}
     </div>
   );

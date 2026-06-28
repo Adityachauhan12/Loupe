@@ -6,14 +6,15 @@ const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Loupe",
-  description: "LLM agent observability and replay",
+  title: "Loupe — LLM agent observability & replay",
+  description:
+    "Instrument your agent in 3 lines, inspect every trace, then replay it with a different prompt or model and diff the output side-by-side.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full`}>
-      <body className="min-h-full bg-gray-950 text-gray-100 antialiased">{children}</body>
+      <body className="min-h-full bg-bg text-fg antialiased font-sans">{children}</body>
     </html>
   );
 }

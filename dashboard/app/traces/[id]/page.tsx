@@ -1,10 +1,26 @@
-
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getTrace, TraceDetail } from "@/lib/api";
+import {
+  Clock,
+  Zap,
+  Coins,
+  Layers,
+  GitBranch,
+  AlertTriangle,
+  Play,
+  ArrowRight,
+} from "lucide-react";
+import { getTrace, TraceDetail, SpanOut } from "@/lib/api";
 import { SpanTree } from "@/components/SpanTree";
 import { ReplayForm } from "@/components/ReplayForm";
 import { AutoRefresh } from "@/components/AutoRefresh";
+import { TopBar } from "@/components/TopBar";
+import { StatusBadge, BranchBadge, ReplayBadge } from "@/components/badges";
+import { CodeBlock } from "@/components/CodeBlock";
+import { Reveal } from "@/components/motion";
+import { Button } from "@/components/ui/button";
+import { SectionLabel } from "@/components/ui/card";
+import { formatDate, formatDuration, formatTokens, formatCost } from "@/lib/format";
 
 export default async function TraceDetailPage({
   params,
@@ -21,171 +37,195 @@ export default async function TraceDetailPage({
     notFound();
   }
 
-  return (
-    <div className="min-h-screen flex flex-col">
-      <header className="border-b border-gray-800 px-6 py-4 flex items-center gap-4">
-        <Link href="/" className="text-gray-500 hover:text-gray-200 transition-colors text-sm">
-          ← Traces
-        </Link>
-        <span className="text-gray-700">/</span>
-        <span className="font-mono text-sm text-gray-300">
-          {trace.name ?? trace.id.slice(0, 16)}
-        </span>
-        <StatusBadge status={trace.status} />
-        {trace.branched_from_trace_id ? (
-          <span className="text-xs text-indigo-400 font-medium">⑂ branch</span>
-        ) : (
-          trace.is_replay && (
-            <span className="text-xs text-purple-400 font-medium">replay</span>
-          )
-        )}
-      </header>
+  const { model, systemPrompt } = extractLlmContext(trace.spans);
 
-      <main className="flex-1 px-6 py-6 max-w-5xl mx-auto w-full space-y-6">
-        {/* Poll while the branch/replay engine is still running */}
+  return (
+    <div className="min-h-dvh">
+      <TopBar
+        back={{ label: "Traces", href: "/" }}
+        crumbs={[{ label: trace.name ?? trace.id.slice(0, 12) }]}
+        right={
+          <>
+            <StatusBadge status={trace.status} />
+            {trace.branched_from_trace_id ? (
+              <BranchBadge />
+            ) : (
+              trace.is_replay && <ReplayBadge />
+            )}
+            {!trace.is_replay && (
+              <Link href="#replay">
+                <Button size="sm" className="ml-1">
+                  <Play className="size-3.5" />
+                  Replay
+                </Button>
+              </Link>
+            )}
+          </>
+        }
+      />
+
+      <main className="mx-auto w-full max-w-6xl space-y-6 px-5 py-7">
         {trace.status === "running" && <AutoRefresh intervalMs={2500} />}
 
         {/* Branch lineage */}
         {trace.branched_from_trace_id && (
-          <div className="flex items-center gap-3 rounded border border-indigo-900/50 bg-indigo-950/20 px-4 py-2 text-xs">
-            <span className="text-indigo-300 font-medium">⑂ Branched run</span>
-            <span className="text-gray-600">·</span>
+          <Reveal className="flex flex-wrap items-center gap-3 rounded-xl border border-primary-strong/30 bg-primary-soft/20 px-4 py-3 text-sm">
+            <span className="inline-flex items-center gap-1.5 font-medium text-primary">
+              <GitBranch className="size-4" />
+              Branched run
+            </span>
+            <span className="text-faint">·</span>
             <Link
               href={`/traces/${trace.branched_from_trace_id}`}
-              className="text-gray-400 hover:text-gray-200 transition-colors"
+              className="text-muted transition-colors hover:text-fg"
             >
-              View original trace →
+              View original trace
             </Link>
-          </div>
+            <Link
+              href={`/traces/${trace.id}/diff`}
+              className="ml-auto inline-flex items-center gap-1 font-medium text-primary transition-colors hover:text-accent"
+            >
+              View diff
+              <ArrowRight className="size-4" />
+            </Link>
+          </Reveal>
         )}
 
-        {/* Meta row */}
-        <MetaRow trace={trace} />
+        {/* Hero + meta cards */}
+        <Reveal>
+          <h1 className="font-mono text-lg font-semibold text-fg">
+            {trace.name ?? trace.id.slice(0, 24)}
+          </h1>
+          <p className="mt-0.5 text-xs text-faint">{formatDate(trace.started_at, { withSeconds: true })}</p>
+
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <StatCard icon={Clock} label="Duration" value={formatDuration(trace.duration_ms)} />
+            <StatCard icon={Zap} label="Tokens" value={formatTokens(trace.total_tokens)} />
+            <StatCard icon={Coins} label="Cost" value={formatCost(trace.total_cost_usd)} />
+            <StatCard icon={Layers} label="Spans" value={String(trace.spans.length)} />
+          </div>
+        </Reveal>
+
+        {/* Error callout — the "spot the bug" moment */}
+        {trace.error && (
+          <Reveal className="overflow-hidden rounded-xl border border-error/30 bg-error-dim/25">
+            <div className="flex items-center gap-2 border-b border-error/20 px-4 py-2.5 text-sm font-medium text-error">
+              <AlertTriangle className="size-4" />
+              This run failed
+            </div>
+            <div className="p-4">
+              <CodeBlock data={trace.error} isError />
+            </div>
+          </Reveal>
+        )}
 
         {/* Input / Output */}
-        {(trace.input || trace.output || trace.error) && (
-          <section className="space-y-3">
+        {(trace.input || trace.output) && (
+          <Reveal className="grid gap-4 lg:grid-cols-2">
             {trace.input && (
-              <JsonSection label="Trace Input" data={trace.input} />
+              <div className="space-y-2">
+                <SectionLabel>Trace input</SectionLabel>
+                <CodeBlock data={trace.input} />
+              </div>
             )}
             {trace.output && (
-              <JsonSection label="Trace Output" data={trace.output} />
+              <div className="space-y-2">
+                <SectionLabel>Trace output</SectionLabel>
+                <CodeBlock data={trace.output} />
+              </div>
             )}
-            {trace.error && (
-              <JsonSection label="Error" data={trace.error} isError />
-            )}
-          </section>
+          </Reveal>
         )}
 
         {/* Span tree */}
-        <section>
-          <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-widest mb-3">
-            Spans ({trace.spans.length})
-          </h2>
-          <SpanTree spans={trace.spans} totalMs={trace.duration_ms} traceId={trace.id} />
-        </section>
+        <Reveal className="space-y-3">
+          <SectionLabel>Spans ({trace.spans.length})</SectionLabel>
+          <SpanTree
+            spans={trace.spans}
+            totalMs={trace.duration_ms}
+            traceId={trace.id}
+            replayHref={!trace.is_replay ? "#replay" : undefined}
+          />
+        </Reveal>
 
         {/* Replay */}
         {!trace.is_replay && (
-          <section className="border border-gray-800 rounded p-5">
-            <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-widest mb-4">
-              Replay this trace
-            </h2>
-            <ReplayForm traceId={trace.id} />
-          </section>
+          <Reveal
+            id="replay"
+            className="scroll-mt-20 overflow-hidden rounded-xl border border-line bg-surface/70"
+          >
+            <div className="flex items-center gap-2 border-b border-line bg-surface-2/60 px-5 py-3">
+              <Play className="size-4 text-primary" />
+              <h2 className="text-sm font-semibold text-fg">Replay this trace</h2>
+              <span className="text-xs text-faint">
+                — change the prompt or model, re-run, and diff the output
+              </span>
+            </div>
+            <div className="p-5">
+              <ReplayForm
+                traceId={trace.id}
+                currentModel={model}
+                currentPrompt={systemPrompt}
+              />
+            </div>
+          </Reveal>
         )}
       </main>
     </div>
   );
 }
 
-// ── Sub-components (server-rendered) ───────────────────────────────────────
+// ── Sub-components ───────────────────────────────────────────────────────────
 
-function MetaRow({ trace }: { trace: TraceDetail }) {
-  const metaItems = [
-    { label: "Started", value: formatDate(trace.started_at) },
-    {
-      label: "Duration",
-      value: trace.duration_ms != null ? formatDuration(trace.duration_ms) : "—",
-    },
-    {
-      label: "Tokens",
-      value: trace.total_tokens != null ? trace.total_tokens.toLocaleString() : "—",
-    },
-    {
-      label: "Cost",
-      value:
-        trace.total_cost_usd != null
-          ? `$${Number(trace.total_cost_usd).toFixed(4)}`
-          : "—",
-    },
-    { label: "Spans", value: String(trace.spans.length) },
-  ];
-
-  return (
-    <div className="flex flex-wrap gap-6">
-      {metaItems.map(({ label, value }) => (
-        <div key={label}>
-          <p className="text-[10px] text-gray-600 uppercase tracking-widest font-semibold">
-            {label}
-          </p>
-          <p className="text-sm text-gray-200 font-mono tabular-nums mt-0.5">{value}</p>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function StatusBadge({ status }: { status: string | null }) {
-  const styles: Record<string, string> = {
-    success: "bg-green-900/50 text-green-400",
-    error: "bg-red-900/50 text-red-400",
-    running: "bg-amber-900/50 text-amber-400",
-  };
-  const cls = styles[status ?? ""] ?? "bg-gray-800 text-gray-400";
-  return (
-    <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${cls}`}>
-      {status ?? "unknown"}
-    </span>
-  );
-}
-
-function JsonSection({
+function StatCard({
+  icon: Icon,
   label,
-  data,
-  isError,
+  value,
 }: {
+  icon: React.ComponentType<{ className?: string }>;
   label: string;
-  data: Record<string, unknown>;
-  isError?: boolean;
+  value: string;
 }) {
   return (
-    <div>
-      <p className={`text-[10px] font-semibold uppercase tracking-widest mb-1 ${isError ? "text-red-500" : "text-gray-600"}`}>
-        {label}
-      </p>
-      <pre className={`text-xs rounded p-3 overflow-x-auto whitespace-pre-wrap break-words max-h-64 overflow-y-auto ${isError ? "bg-red-950/40 text-red-300 border border-red-900/40" : "bg-gray-900 text-gray-300 border border-gray-800"}`}>
-        {JSON.stringify(data, null, 2)}
-      </pre>
+    <div className="rounded-xl border border-line bg-surface/60 p-3.5 transition-colors hover:border-line-strong">
+      <div className="flex items-center gap-1.5 text-faint">
+        <Icon className="size-3.5" />
+        <span className="text-[10px] font-semibold uppercase tracking-[0.12em]">
+          {label}
+        </span>
+      </div>
+      <p className="mt-1.5 font-mono text-lg tabular-nums text-fg">{value}</p>
     </div>
   );
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
-function formatDate(iso: string): string {
-  return new Intl.DateTimeFormat("en-IN", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-    timeZone: "Asia/Kolkata",
-  }).format(new Date(iso));
-}
+/** Best-effort: pull the model + system prompt from the first LLM span so the
+ *  replay form can show what you're about to override (no more blind edits). */
+function extractLlmContext(spans: SpanOut[]): {
+  model: string | null;
+  systemPrompt: string | null;
+} {
+  const llm = spans
+    .filter((s) => s.type === "llm")
+    .sort(
+      (a, b) =>
+        new Date(a.started_at).getTime() - new Date(b.started_at).getTime(),
+    )[0];
+  if (!llm) return { model: null, systemPrompt: null };
 
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(2)}s`;
+  const input = llm.input as Record<string, unknown> | null;
+  let systemPrompt: string | null = null;
+  if (input) {
+    if (typeof input.system === "string") {
+      systemPrompt = input.system;
+    } else if (Array.isArray(input.messages)) {
+      const sys = (input.messages as Array<Record<string, unknown>>).find(
+        (m) => m.role === "system",
+      );
+      if (sys && typeof sys.content === "string") systemPrompt = sys.content;
+    }
+  }
+  return { model: llm.model, systemPrompt };
 }
