@@ -61,10 +61,14 @@ export function BranchEditor({
       <div className="flex items-start gap-2">
         <GitBranch className="mt-0.5 size-4 shrink-0 text-primary" />
         <p className="text-[11px] leading-relaxed text-muted">
-          Edit this span&apos;s output and continue. Everything{" "}
-          <span className="font-medium text-fg">before</span> is frozen;
-          everything <span className="font-medium text-fg">after</span> re-runs —
-          writes are dry-run, so no real-world actions fire.
+          <span className="font-medium text-fg">Preview branch (LLM-only).</span>{" "}
+          Spans <span className="font-medium text-fg">before</span> are frozen and
+          LLM calls <span className="font-medium text-fg">after</span> re-run, but
+          your tool functions can&apos;t run on the server — they show as dry-run
+          ghosts, so the edit won&apos;t propagate through tools. For a true branch
+          where the edit flows through real tools, run{" "}
+          <code className="rounded bg-surface-2 px-1 font-mono text-[10px]">loupe replay</code>{" "}
+          from your code.
         </p>
       </div>
       <textarea

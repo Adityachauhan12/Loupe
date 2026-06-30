@@ -149,6 +149,19 @@ Open the dashboard → the trace appears → open it → click **Replay** to re-
 
 ---
 
+## Replay & branch — what it guarantees
+
+Branching a trace from a span comes in **two modes**, surfaced and labeled in the diff:
+
+- **SDK-side replay** (`loupe replay` / `loupe.replay()`) — runs **in your process**, so your real tool functions re-execute and the edit **propagates** all the way to the final answer. This is the true counterfactual.
+- **Server-side branch** (the dashboard "Branch from here" button) — runs on the server, which **can't execute your tool code**. It re-runs LLM calls and shows downstream tools as **dry-run ghosts**, so it's an honest **LLM-only preview**; the edit does not propagate through tools.
+
+**Deterministic by design.** Spans *before* the branch point are frozen (stored outputs); only the edit and everything after it re-run. That isolates the one thing you changed. Replay is faithful for **captured** state (recorded span I/O, LLM `seed`/`temperature`); un-instrumented external state (wall-clock time, RNG, live reads) is best-effort and can vary — see [docs/design-deterministic-replay.md](docs/design-deterministic-replay.md).
+
+**Cost note.** Server-side branch re-runs LLM calls with the **server's** provider keys, so a branch click spends the operator's API budget. Fine for single-user self-host; on a shared deployment set `ALLOW_SERVER_SIDE_LLM_REPLAY=false` to make post-branch LLM spans pass through stored output instead of re-running live.
+
+---
+
 ## Tech stack
 
 | Layer | Choice |

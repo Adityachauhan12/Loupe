@@ -80,3 +80,26 @@ between two replays of the same edit. We do not pretend otherwise. Mitigations:
 
 This is the same principle as a controlled experiment — change one thing, hold
 the rest fixed, observe the effect.
+
+## The replay boundary — what's captured vs best-effort (decision B6)
+
+Replay re-runs the agent from the original's **captured** inputs and freezes spans
+before the branch point. It is faithful **only for state that was captured**.
+Anything a span reads that we did *not* instrument is best-effort and can cause
+divergence unrelated to the edit:
+
+- wall-clock time (`datetime.now()`), randomness / RNG without a fixed seed
+- a live DB / API read that returns something different at replay time
+- environment variables, files, or other process/host state
+
+This is a fundamental property of non-deterministic agents, **not** a bug in the
+engine. We are explicit about it rather than pretending otherwise:
+
+- **Captured & frozen** (faithful): span inputs/outputs recorded in the original
+  trace; LLM `seed` + `temperature` (Phase 1).
+- **Best-effort** (may vary): un-instrumented external reads as listed above.
+
+Mitigation if you need more fidelity: freeze the *output* of an un-replayable read
+(treat it like a frozen span) so downstream sees a stable value. That's opt-in
+future polish — the default contract is **capture-and-freeze**, documented here and
+in the README's "What replay guarantees" section.
