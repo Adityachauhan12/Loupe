@@ -553,6 +553,12 @@ a worker-produced branch ingests identically — already true via **B2 → A**).
 
 ## Consolidated build backlog (from the B1–B7 decisions)
 
+> **Status (2026-06-30): ✅ IMPLEMENTED & committed.** Items 1–9 shipped across commits
+> `c13ccb4` (schema + ingest), `adc7c5c` (branch/SDK replay_mode + B7 guard), `28dd046`
+> (dashboard kind from replay_mode + cost caveat), `d08e89b` (labeling + docs). Item 10
+> (Phase 7 notes) was committed earlier. Tests: server 65, SDK 30, dashboard build green.
+> Remaining: only the optional local DB cleanup of old lineage-less test branches.
+
 Ordered schema → server → SDK → dashboard → docs so each step builds on the last. This is
 the agreed work to apply when building resumes.
 
