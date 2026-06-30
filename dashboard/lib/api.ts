@@ -80,6 +80,7 @@ export interface TraceDetail {
   replay_of_trace_id: string | null;
   branched_from_trace_id: string | null;
   branched_from_span_id: string | null;
+  replay_mode: string | null;
   created_at: string;
   spans: SpanOut[];
 }

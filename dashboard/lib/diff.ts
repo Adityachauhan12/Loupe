@@ -68,6 +68,15 @@ function inferKind(branchedSpans: SpanOut[]): BranchKind {
   return sawFrozen ? "sdk" : "unknown";
 }
 
+/** Prefer the explicit `replay_mode` stored on the trace (B3); fall back to
+ * marker inference only for branches created before that column existed. */
+function resolveKind(branched: TraceDetail): BranchKind {
+  if (branched.replay_mode === "sdk" || branched.replay_mode === "server") {
+    return branched.replay_mode;
+  }
+  return inferKind(byStart(branched.spans));
+}
+
 /**
  * Align a branched trace against its original, from the branch point onward.
  *
@@ -119,6 +128,6 @@ export function alignFromBranch(
     costDelta:
       Number(branched.total_cost_usd ?? 0) - Number(original.total_cost_usd ?? 0),
     statusChanged: original.status !== branched.status,
-    kind: inferKind(newSorted),
+    kind: resolveKind(branched),
   };
 }

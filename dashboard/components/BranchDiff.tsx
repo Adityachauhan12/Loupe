@@ -235,7 +235,8 @@ export function BranchDiff({
         <p className="border-b border-line px-4 py-2 text-xs text-faint">
           {diff.frozenCount} span{diff.frozenCount > 1 ? "s" : ""} before the branch point{" "}
           {diff.frozenCount > 1 ? "are" : "is"} identical (frozen) — diff starts from the branch
-          point.
+          point. Frozen spans reuse the original&rsquo;s tokens/cost, so the deltas above reflect
+          only re-run spans.
         </p>
       )}
 
