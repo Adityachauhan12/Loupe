@@ -309,12 +309,26 @@ Most teams will use this directly. v2.2 is the GitHub wrapper on top of the same
 
 ### v2 Build Checklist
 
-- [ ] DB migration: `branched_from_span_id` on traces; `suites` and `suite_runs` tables
-- [ ] Server: deterministic replay engine (replay stored span outputs up to a branch point)
-- [ ] Server: `POST /v1/traces/{id}/branch` endpoint
-- [ ] Server: `JudgeService` with Claude/GPT-4 backend
+**v2.1 — Time-Travel Debug (branch + diff) — ✅ DONE**
+
+- [x] DB migration: `branched_from_trace_id` / `branched_from_span_id` on traces (`c3f8a21d9b04`)
+- [x] Server: deterministic replay engine — server-side `_run_branch` (LLM-only preview, dry-run writes) **and** SDK-side `loupe.replay` (edit propagates through real tools)
+- [x] Server: `POST /v1/traces/{id}/branch` endpoint
+- [x] SDK: `loupe.replay()` + `loupe replay` CLI
+- [x] Dashboard: per-span "Branch from here" on trace detail
+- [x] Dashboard: **branch-vs-original diff view** (Phase 7) — status-change banner, deltas, per-span pairs
+- [x] Explicit `replay_mode` column + `replays`-row consistency (arch B2/B3) + `ALLOW_SERVER_SIDE_LLM_REPLAY` guard (B7); replay boundary documented (B6). See [ARCHITECTURE_DECISIONS.md](ARCHITECTURE_DECISIONS.md).
+
+**Track D — demo polish — ⬜ PENDING**
+
+- [ ] Killer demo recording (failed trace → branch → side-by-side fix)
+- [ ] Real README screenshots (replace placeholders in `docs/*.png`) + live URLs
+
+**v2.2 — Prompt CI/CD (suites + judge + GitHub Action) — ⬜ NOT STARTED**
+
+- [ ] DB: `suites` and `suite_runs` tables
+- [ ] Server: `JudgeService` with a Claude backend (scores replay vs original: equivalent / regressed / improved)
 - [ ] Server: suite + suite_run CRUD endpoints
-- [ ] Dashboard: per-span "Branch from here" on trace detail
 - [ ] Dashboard: `/suites` and `/suite_runs/{id}` pages
 - [ ] CLI: `loupe suite create/run/diff` commands
 - [ ] GitHub Action: `loupe-action` repo, PR comment poster, status check
