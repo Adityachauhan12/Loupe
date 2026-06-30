@@ -12,5 +12,11 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = None
     groq_api_key: str | None = None
 
+    # B7: server-side branch re-runs LLM calls with the *server's* provider keys.
+    # Fine for single-user self-host; set false on a shared deployment so a branch
+    # click can't spend the operator's budget (post-branch LLM spans then pass
+    # through the stored output instead of re-executing live).
+    allow_server_side_llm_replay: bool = True
+
 
 settings = Settings()

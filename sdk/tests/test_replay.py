@@ -152,6 +152,7 @@ def test_replay_branch_at_first_llm_propagates_downstream(monkeypatch):
     assert trace.is_replay is True
     assert str(trace.branched_from_trace_id) == _TID
     assert str(trace.branched_from_span_id) == _S1
+    assert trace.replay_mode == "sdk"  # B3: loupe.replay tags the trace
     # Final output reflects the LIVE re-run, not the stored OLD-write.
     assert trace.output == {"final": "LIVE-OUTPUT"}
     spans = {s.name: s for s in trace.spans}

@@ -510,8 +510,11 @@ async def _run_branch(
                     extra_metadata={**(orig.extra_metadata or {}), "branch_point": True},
                 )
 
-            elif orig.type == "llm" and orig.input:
+            elif orig.type == "llm" and orig.input and settings.allow_server_side_llm_replay:
                 # ── After the branch, llm: re-execute live ──
+                # (B7: when allow_server_side_llm_replay is off, this condition is
+                # false, so the span falls through to the policy branch below and
+                # passes through its stored output — no live call, no key spend.)
                 messages = orig.input.get("messages", [])
                 system_prompt = orig.input.get("system")
                 model = orig.model or "claude-haiku-4-5-20251001"

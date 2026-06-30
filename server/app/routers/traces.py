@@ -257,6 +257,7 @@ async def branch_trace(
             is_replay=True,
             branched_from_trace_id=original.id,
             branched_from_span_id=branch_span.id,
+            replay_mode="server",
             started_at=now,
         )
     )

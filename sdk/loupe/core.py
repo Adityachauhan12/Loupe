@@ -98,6 +98,7 @@ def trace(_fn: F | None = None, *, name: str | None = None) -> Any:
                     is_replay=rplan is not None,
                     branched_from_trace_id=rplan.branched_from_trace_id if rplan else None,
                     branched_from_span_id=rplan.branched_from_span_id if rplan else None,
+                    replay_mode="sdk" if rplan is not None else None,
                     spans=ctx.spans,
                 )
                 _client.enqueue(payload)

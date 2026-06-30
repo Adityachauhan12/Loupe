@@ -205,6 +205,41 @@ async def test_branch_reexecutes_llm_after_branch(project, db):
     assert by_name["classify_b"].total_tokens == 15
 
 
+async def test_branch_llm_passthrough_when_server_replay_disabled(project, db):
+    """B7: with allow_server_side_llm_replay off, a post-branch llm is NOT re-run —
+    it passes through its stored output and the provider is never called."""
+    sf = async_sessionmaker(make_engine(), expire_on_commit=False)
+    spans = [
+        _span("classify_a", "llm", 0, model="llama-3.3-70b-versatile", provider="groq",
+              input={"messages": [{"role": "user", "content": "a"}]},
+              output={"content": "old-a"}),
+        _span("classify_b", "llm", 1, model="llama-3.3-70b-versatile", provider="groq",
+              input={"messages": [{"role": "user", "content": "b"}]},
+              output={"content": "old-b"}),
+    ]
+    branch_span = spans[0]
+    original, new_trace_id, replay_id = await _seed(sf, project.id, spans)
+
+    groq_mock = AsyncMock()
+    with (
+        patch("app.routers.replays.SessionLocal", new=sf),
+        patch("app.routers.replays.settings.allow_server_side_llm_replay", False),
+        patch("app.routers.replays._call_groq", new=groq_mock),
+    ):
+        await _run_branch(
+            replay_id=replay_id, new_trace_id=new_trace_id,
+            original_trace_id=original.id, branch_span_id=branch_span.id,
+            new_output={"content": "edited-a"}, project_id=project.id,
+        )
+
+    trace, by_name = await _load(sf, new_trace_id)
+    assert trace.status == "success"
+    groq_mock.assert_not_called()  # no live call, no key spend
+    # downstream llm kept its stored output, marked as a passthrough
+    assert by_name["classify_b"].output == {"content": "old-b"}
+    assert by_name["classify_b"].extra_metadata["replay"] == "stored_passthrough"
+
+
 async def test_branch_passthrough_for_live_tool_after_branch(project, db):
     """A tool annotated replay_policy='live' after the branch can't be run by the
     server → its stored output is passed through (Option A)."""
@@ -308,6 +343,7 @@ async def test_branch_endpoint_creates_placeholder_and_replay(client, db):
     assert str(new_trace.branched_from_trace_id) == trace["id"]
     assert str(new_trace.branched_from_span_id) == span["id"]
     assert new_trace.is_replay is True
+    assert new_trace.replay_mode == "server"  # B3: dashboard branch is server-side
 
     # Replay row records the edit.
     replay = await db.get(Replay, uuid.UUID(body["replay_id"]))

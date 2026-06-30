@@ -45,4 +45,5 @@ class TracePayload(BaseModel):
     replay_of_trace_id: uuid.UUID | None = None
     branched_from_trace_id: uuid.UUID | None = None
     branched_from_span_id: uuid.UUID | None = None
+    replay_mode: str | None = None
     spans: list[SpanPayload] = Field(default_factory=list)
