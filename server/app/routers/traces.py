@@ -52,6 +52,7 @@ async def ingest_trace(
         "replay_of_trace_id": payload.replay_of_trace_id,
         "branched_from_trace_id": payload.branched_from_trace_id,
         "branched_from_span_id": payload.branched_from_span_id,
+        "replay_mode": payload.replay_mode,
     }
 
     # Idempotent: re-delivery of the same trace id is a no-op.
@@ -88,6 +89,57 @@ async def ingest_trace(
             index_elements=["id"]
         )
         await db.execute(span_stmt)
+
+    # B2: every branch gets a `replays` row so the table is uniform ("list all
+    # replays" is one query). Server-side branches create theirs in the branch
+    # endpoint; an SDK-side replay (loupe.replay) arrives here with branched_from
+    # set but no row — auto-create one. Idempotent: skip if a row already exists.
+    if payload.branched_from_trace_id is not None:
+        existing_replay = (
+            await db.execute(
+                select(Replay.id).where(Replay.new_trace_id == payload.id)
+            )
+        ).scalar_one_or_none()
+        if existing_replay is None:
+            original = (
+                await db.execute(
+                    select(Trace).where(Trace.id == payload.branched_from_trace_id)
+                )
+            ).scalar_one_or_none()
+            orig_tokens = original.total_tokens if original else None
+            orig_duration = original.duration_ms if original else None
+            branch_span_id = (
+                str(payload.branched_from_span_id)
+                if payload.branched_from_span_id
+                else None
+            )
+            # The edited output = the branch-point span's output (the SDK already
+            # applied the edit locally), so the row mirrors the server-side shape.
+            branch_output = next(
+                (
+                    s.output
+                    for s in payload.spans
+                    if (s.metadata or {}).get("branch_point") is True
+                ),
+                None,
+            )
+            db.add(
+                Replay(
+                    original_trace_id=payload.branched_from_trace_id,
+                    new_trace_id=payload.id,
+                    modifications={
+                        "branch_span_id": branch_span_id,
+                        "new_output": branch_output,
+                    },
+                    diff_summary={
+                        "token_delta": (payload.total_tokens or 0) - (orig_tokens or 0),
+                        "latency_delta_ms": (payload.duration_ms or 0)
+                        - (orig_duration or 0),
+                        "status": payload.status,
+                        "branch_span_id": branch_span_id,
+                    },
+                )
+            )
 
     try:
         await db.commit()

@@ -41,6 +41,10 @@ TEST_DATABASE_URL = "postgresql+asyncpg://loupe:loupe@localhost:5433/loupe_test"
 async def _create_tables() -> None:
     eng = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
     async with eng.begin() as conn:
+        # Drop first so the test DB always matches the current models — otherwise
+        # create_all skips an existing table and a newly-added column (e.g.
+        # traces.replay_mode) is silently missing, failing the whole suite.
+        await conn.run_sync(Base.metadata.drop_all)
         # create_all handles the circular FK via use_alter=True on
         # branched_from_span_id — SQLAlchemy emits ALTER TABLE after both
         # tables exist, so no CircularDependencyError.

@@ -96,6 +96,10 @@ class Trace(Base):
         UUID(as_uuid=True),
         ForeignKey("spans.id", use_alter=True, name="fk_traces_branched_from_span"),
     )
+    # How this branch was produced: 'server' (dashboard branch, LLM-only preview)
+    # or 'sdk' (loupe.replay, edit propagates). Null for non-branch traces and for
+    # branches created before this column existed (the diff infers kind as a fallback).
+    replay_mode: Mapped[str | None] = mapped_column(String(16))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

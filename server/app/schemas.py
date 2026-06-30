@@ -49,6 +49,7 @@ class TraceIn(BaseModel):
     replay_of_trace_id: uuid.UUID | None = None
     branched_from_trace_id: uuid.UUID | None = None
     branched_from_span_id: uuid.UUID | None = None
+    replay_mode: str | None = Field(default=None, max_length=16)
     spans: list[SpanIn] = Field(default_factory=list)
 
 
@@ -121,6 +122,7 @@ class TraceDetail(BaseModel):
     replay_of_trace_id: uuid.UUID | None
     branched_from_trace_id: uuid.UUID | None
     branched_from_span_id: uuid.UUID | None
+    replay_mode: str | None
     created_at: datetime
     spans: list[SpanOut]
 

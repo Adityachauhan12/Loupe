@@ -7,8 +7,25 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from tests.conftest import make_span_payload, make_trace_payload
+from app.models import Replay
+from tests.conftest import make_engine, make_span_payload, make_trace_payload
+
+
+async def _replays_for(new_trace_id: str) -> list[Replay]:
+    """Fresh-session lookup of the replays auto-created for a branch (ingest commits,
+    so a new session sees them — avoids any client/session sharing assumptions)."""
+    eng = make_engine()
+    async with async_sessionmaker(eng, expire_on_commit=False)() as s:
+        rows = (
+            await s.execute(
+                select(Replay).where(Replay.new_trace_id == uuid.UUID(new_trace_id))
+            )
+        ).scalars().all()
+    await eng.dispose()
+    return list(rows)
 
 
 # ── POST /v1/traces ────────────────────────────────────────────────────────────
@@ -53,6 +70,77 @@ async def test_ingest_trace_idempotent(client):
     resp2 = await client.post("/v1/traces", json=payload)
     assert resp1.status_code == 201
     assert resp2.status_code == 201
+
+
+# ── B2: ingest auto-creates a replays row for SDK-side branches ────────────────
+
+
+def _branch_point_span() -> dict:
+    span = make_span_payload("classify", "llm")
+    span["metadata"] = {"branch_point": True}
+    span["output"] = {"content": "edited"}
+    return span
+
+
+async def test_ingest_branch_autocreates_replay_row(client):
+    """An SDK-side branch arrives with branched_from set but no replays row; the
+    server auto-creates one with the diff metadata computed against the original."""
+    orig_span = make_span_payload("classify", "llm")
+    original = make_trace_payload(
+        name="orig", status="success", total_tokens=100, duration_ms=1000,
+        spans=[orig_span],
+    )
+    await client.post("/v1/traces", json=original)
+
+    bp = _branch_point_span()
+    branch = make_trace_payload(
+        name="orig (branch)",
+        status="success",
+        spans=[bp],
+        total_tokens=140,
+        duration_ms=700,
+        is_replay=True,
+        replay_mode="sdk",
+        branched_from_trace_id=original["id"],
+        branched_from_span_id=orig_span["id"],  # FK → an existing original span
+    )
+    resp = await client.post("/v1/traces", json=branch)
+    assert resp.status_code == 201
+
+    rows = await _replays_for(branch["id"])
+    assert len(rows) == 1
+    row = rows[0]
+    assert str(row.original_trace_id) == original["id"]
+    assert row.diff_summary["token_delta"] == 40       # 140 - 100
+    assert row.diff_summary["latency_delta_ms"] == -300  # 700 - 1000
+    assert row.diff_summary["status"] == "success"
+    # new_output is recovered from the branch-point span's output
+    assert row.modifications["new_output"] == {"content": "edited"}
+
+
+async def test_ingest_branch_replay_row_idempotent(client):
+    """Re-delivering the branch must not create a second replays row."""
+    orig_span = make_span_payload("classify", "llm")
+    original = make_trace_payload(name="orig", total_tokens=10, spans=[orig_span])
+    await client.post("/v1/traces", json=original)
+    branch = make_trace_payload(
+        name="orig (branch)",
+        spans=[_branch_point_span()],
+        is_replay=True,
+        replay_mode="sdk",
+        branched_from_trace_id=original["id"],
+        branched_from_span_id=orig_span["id"],
+    )
+    await client.post("/v1/traces", json=branch)
+    await client.post("/v1/traces", json=branch)  # re-delivery
+    assert len(await _replays_for(branch["id"])) == 1
+
+
+async def test_ingest_plain_trace_no_replay_row(client):
+    """A normal (non-branch) trace must not create a replays row."""
+    payload = make_trace_payload(name="plain")
+    await client.post("/v1/traces", json=payload)
+    assert await _replays_for(payload["id"]) == []
 
 
 
