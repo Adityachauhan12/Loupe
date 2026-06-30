@@ -136,12 +136,11 @@ diff**. Recapture with the new UI:
 |---|---|---|
 | Traces list | `docs/traces-list.png` | SHOT 1 |
 | Trace detail (span tree) | `docs/trace-detail.png` | SHOT 2 |
-| Side-by-side diff | `docs/replay-diff.png` | SHOT 3 (use the **branch** diff) |
+| Branch diff (header/deltas, downstream, final) | `docs/branch-diff-1.png` … `branch-diff-3.png` | SHOT 3 (scroll the **branch** diff) |
 
-> Optional: also add a 4th image of the status-change banner if you stage an
-> error→success branch. After dropping the PNGs, the README table renders them
-> automatically — no code change. (Ask me to add a dedicated branch-diff row/caption
-> if you want a 4-up table.)
+> The README features the branch diff with three stacked shots (top → downstream →
+> final answer). After dropping the PNGs the README renders them automatically — no
+> code change.
 
 ---
 

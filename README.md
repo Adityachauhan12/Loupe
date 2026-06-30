@@ -22,9 +22,15 @@ That replay loop is the whole point. Everything else exists to serve it.
 
 ## Screenshots
 
-| Traces list | Trace detail (span tree) | Side-by-side replay diff |
-|---|---|---|
-| ![Traces list](docs/traces-list.png) | ![Trace detail](docs/trace-detail.png) | ![Replay diff](docs/replay-diff.png) |
+| Traces list | Trace detail (span tree) |
+|---|---|
+| ![Traces list](docs/traces-list.png) | ![Trace detail](docs/trace-detail.png) |
+
+**The branch diff** — original vs counterfactual, aligned from the branch point, with per-span text diffs. Here a parse step is branched from `Sci-Fi` → `Comedy`; the edit propagates through the real tools and the final recommendation changes (Dune → Poor Things):
+
+![Branch diff — header, deltas, and the edited span](docs/branch-diff-1.png)
+![Branch diff — the change propagating downstream](docs/branch-diff-2.png)
+![Branch diff — the final answer differs](docs/branch-diff-3.png)
 
 ---
 
