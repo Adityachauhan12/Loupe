@@ -11,7 +11,10 @@
 >
 > Status legend: 🔒 LOCKED · 🟡 OPEN (needs decision) · 🔵 FUTURE (not blocking now)
 >
-> Last updated: 2026-06-25 · Phase: v2, between Phase 7 (branch diff) and Track D.
+> Last updated: 2026-06-30 · Phase: v2, between Phase 7 (branch diff) and Track D.
+> **All open blockers B1–B7 are RESOLVED** (B8/B9/B10 are FUTURE). The decisions produced
+> a concrete build backlog — see "Consolidated build backlog" at the end. Building resumes
+> from there.
 
 ---
 
@@ -29,14 +32,15 @@
 | A8 | Deterministic replay = freeze-before / live-after | 🔒 (see design doc) |
 | A9 | Side-effect policy = dry-run writes by default | 🔒 (see design doc) |
 | **B1** | **Two kinds of replay (server-side vs SDK-side) — which is the product?** | ✅ RESOLVED → (1) |
-| **B2** | **`replays` table vs `branched_from` columns — source of truth** | 🟡 |
-| **B3** | **Branch "kind" is inferred, not stored** | 🟡 |
+| **B2** | **`replays` table vs `branched_from` columns — source of truth** | ✅ RESOLVED → (A) + SDK writes a row |
+| **B3** | **Branch "kind" is inferred, not stored** | ✅ RESOLVED → (A) explicit `replay_mode` |
 | **B4** | **Provider-call logic duplicated (server engine vs SDK integrations)** | 🟡 |
-| **B5** | **Cost/token honesty inside a branched trace** | 🟡 |
-| **B6** | **Replay boundary — what is actually replayable (external state)** | 🟡 |
-| **B7** | **Authz & cost of server-side branch (whose API keys?)** | 🟡 |
+| **B5** | **Cost/token honesty inside a branched trace** | ✅ RESOLVED → (A) blended + note |
+| **B6** | **Replay boundary — what is actually replayable (external state)** | ✅ RESOLVED → (A) document boundary |
+| **B7** | **Authz & cost of server-side branch (whose API keys?)** | ✅ RESOLVED → (A)+(B) document + guard |
 | B8 | Judge / suite infra (v2.2) — the next big commitment | 🔵 |
 | B9 | Replay-plan concurrency (ContextVar / async / threads) | 🔵 |
+| B10 | Embedded outbound worker (server-side branch runs real tools) — B1 option (3) | 🔵 PLANNED (future) |
 
 ---
 
@@ -208,7 +212,8 @@ worker only matters for a narrower future case: a non-developer clicking "branch
 against a live system. So:
 - **Today / for the demo:** nothing to build — local `loupe replay`.
 - **For a hosted product later:** embedded worker (one flag, outbound) + replay-safe
-  flags. This is B1 option (3), deferred on purpose.
+  flags. This is B1 option (3) — **committed as a future direction, tracked in B10** (not
+  built now, but the design stays coherent toward it).
 
 **Interview line:** *"Server-side branch is LLM-only by design because the server is the
 control plane and can't execute user tool code — that's a trust boundary, not a missing
@@ -218,7 +223,27 @@ runner. I scoped the worker and deferred it because the debugging demo doesn't n
 
 ---
 
-### B2 — `replays` table vs `branched_from` columns: source of truth 🟡
+### B2 — `replays` table vs `branched_from` columns: source of truth ✅ RESOLVED → (A) + SDK writes a row
+
+> **Decision (2026-06-30): Option (A) + SDK-side branches also get a `replays` row.**
+> `branched_from_trace_id` / `branched_from_span_id` on the child trace stay the **source
+> of truth for lineage** (the diff already reads them; always present on every branch).
+> *Additionally*, **every** branch — server *and* SDK — gets a `replays` row so the table
+> is uniform and "list all replays/branches" is one query. **Rationale:** data
+> consistency — both representations exist for both paths; no path is half-recorded.
+>
+> **Chosen implementation: the server auto-creates the `replays` row at ingest.** When a
+> trace is ingested with `branched_from_*` set and no `replays` row yet exists for it, the
+> ingest endpoint creates one — `original_trace_id` / `new_trace_id` from the lineage,
+> `modifications = {branch_span_id, new_output?}`, and `diff_summary` (token/latency/status
+> deltas) computed against the original, which is already in the DB. *Why server-side, not
+> SDK-side:* keeps the SDK unchanged (it already sets `branched_from`), avoids a second
+> round-trip, and centralises row-creation so server-side and SDK branches go through the
+> exact same code. **Idempotent:** skip if a row already exists (server-side branches make
+> theirs explicitly in the branch endpoint).
+> **Build task** (when we resume): add the auto-create-on-ingest logic in
+> [server/app/routers/traces.py](server/app/routers/traces.py) `ingest_trace`; guard on
+> "has `branched_from` and no existing `replays` row."
 
 **The tension.** The parent→child link of a branch is currently expressed *two* ways:
 - `traces.branched_from_trace_id` + `traces.branched_from_span_id` (on the child trace)
@@ -258,7 +283,24 @@ also write a `replays` row?
 
 ---
 
-### B3 — Branch "kind" is inferred, not stored 🟡
+### B3 — Branch "kind" is inferred, not stored ✅ RESOLVED → (A) explicit `replay_mode`
+
+> **Decision (2026-06-30): Option (A).** Add an explicit nullable column
+> `traces.replay_mode` (`'server' | 'sdk' | null`), set when a branch is created. The diff
+> view reads it directly; the marker-based inference (`lib/diff.ts` `inferKind`) is kept
+> only as a fallback for pre-existing rows. **Rationale:** the server-vs-SDK distinction is
+> user-facing (B1: "preview" vs "true branch"), so it should be stored, not guessed — a
+> first-span branch currently shows a vague "unknown". Cost is tiny and we're already
+> touching branch-creation for B2.
+>
+> **Build tasks** (when we resume):
+> - Alembic migration: add `replay_mode TEXT NULL` to `traces`.
+> - Set `'server'` in the branch endpoint ([replays.py](server/app/routers/replays.py),
+>   `create`/`_run_branch` placeholder trace); set `'sdk'` in the SDK trace payload when a
+>   replay plan is active ([sdk/loupe/core.py](sdk/loupe/core.py), where `is_replay` is
+>   set) → carried through `TraceIn` → persisted in `ingest_trace`.
+> - Expose on `TraceDetail` (server `schemas.py` + dashboard `lib/api.ts`); make
+>   `BranchDiff` prefer `trace.replay_mode`, fall back to `inferKind`.
 
 **The tension.** Nothing on a branched trace says "I was made by the server engine" vs
 "by the SDK." The Phase 7 diff *guesses* from span markers: sees `dry_run`/
@@ -321,7 +363,18 @@ churn becomes painful.
 
 ---
 
-### B5 — Cost/token honesty inside a branched trace 🟡
+### B5 — Cost/token honesty inside a branched trace ✅ RESOLVED → (A) blended + note
+
+> **Decision (2026-06-30): Option (A).** Keep blended trace totals (frozen spans reuse the
+> original's tokens/cost, re-run spans carry new real numbers, ghosts carry none) and make
+> them honest with a one-line caveat on the diff rather than new schema. **Rationale:** the
+> numbers are already correct; they only *read* oddly (a small edit can show ~0 token delta
+> because most spans were frozen copies — which is the truth). A label fixes the perception
+> for free; splitting new-vs-reused cost (B) is real schema + UI for marginal demo value.
+> **Build task** (when we resume): extend the existing "frozen" note in
+> [BranchDiff.tsx](dashboard/components/BranchDiff.tsx) to add: *"Frozen spans reuse the
+> original's tokens/cost; deltas reflect only re-run spans."* Revisit (B) only if we build
+> real cost analytics.
 
 **The tension.** A branched trace mixes spans of different provenance: frozen spans keep
 the *original's* tokens/cost, re-run spans carry *new* real numbers, ghost spans carry
@@ -350,7 +403,19 @@ cost (B)?
 
 ---
 
-### B6 — Replay boundary: what is actually replayable? 🟡
+### B6 — Replay boundary: what is actually replayable? ✅ RESOLVED → (A) document boundary
+
+> **Decision (2026-06-30): Option (A).** Make the boundary explicit instead of widening
+> capture: replay is faithful only for spans whose inputs were captured; un-instrumented
+> external state (wall-clock time, RNG, live DB/API reads, env, files) is best-effort and
+> can cause edit-unrelated divergence. **Rationale:** this is a fundamental property of
+> non-deterministic agents, not an engine bug — consistent with A8's honesty. We already
+> capture seed/temperature. Broadening to time/RNG (B) is real, never-total work; full
+> record-replay (C) is a research project. **Build tasks** (when we resume): add a "What
+> replay guarantees / does not guarantee" section to the README and a boundary note in
+> [docs/design-deterministic-replay.md](docs/design-deterministic-replay.md). Keep (B) as
+> opt-in future polish — e.g. an option to freeze a tool's *output* on replay for agents
+> with un-replayable reads.
 
 **The tension.** SDK-side replay re-runs the agent from the original's captured `input`
 (args/kwargs) and freezes spans before the branch. But an agent can depend on state we
@@ -380,7 +445,21 @@ we want to invest in broader deterministic capture now (B)?
 
 ---
 
-### B7 — Authz & cost of server-side branch (whose keys?) 🟡
+### B7 — Authz & cost of server-side branch (whose keys?) ✅ RESOLVED → (A)+(B) document + guard
+
+> **Decision (2026-06-30): Option (A) + (B).** Document the key/cost model *and* add a
+> minimal guard. **Rationale:** the implicit "a dashboard click spends the server
+> operator's unbounded API budget" is fine for single-user self-host (A6) but worth a cheap
+> safety net, and it's a strong "I thought about abuse" signal. Not building tenant billing
+> (C) — out of scope.
+> **Build tasks** (when we resume):
+> - **(A)** README/self-host docs: state that server-side branch re-runs LLM calls with the
+>   **server's** configured provider keys; self-host/budget accordingly.
+> - **(B)** Config flag `ALLOW_SERVER_SIDE_LLM_REPLAY` (default on for self-host) that, when
+>   off, makes the branch endpoint skip live LLM re-execution (ghost/passthrough only) — so
+>   a shared deployment can't have its keys spent by branch clicks. Optionally a simple
+>   per-API-key/day branch cap. Small, in [replays.py](server/app/routers/replays.py) +
+>   [config.py](server/app/config.py).
 
 **The tension.** The server-side branch re-runs LLM calls using the **server's** provider
 keys ([config.settings](server/app/config.py)), triggered by anyone holding a project API
@@ -425,6 +504,87 @@ walks span decisions via a cursor. This is correct for a single synchronous agen
 `async` agents or threaded fan-out, ContextVar propagation and the shared cursor could
 misclassify spans. Not a problem for current (sync) example agents. Revisit if/when we
 support async agent entrypoints. Noted so it isn't a silent assumption.
+
+---
+
+### B10 — Embedded outbound worker (real-tool server-side branch) 🔵 PLANNED (future)
+
+> **Status: committed for a later phase, not now.** This is B1 option (3) — the path that
+> closes the gap between server-side branch and SDK-side replay. We are *not* building it
+> for the MVP/demo (the North Star demo doesn't need it — see the B1 explainer), but it is
+> an intended future direction, recorded here so the design stays coherent toward it.
+
+**What it is.** Today server-side branch can't run the user's tool functions (the server is
+the control plane; it holds no user code — see the **B1 explainer**). The fix is an
+**outbound worker embedded in the user's own app**: a background listener started by one
+flag that *dials out* to the Loupe server and waits for replay jobs, runs them **in-process**
+(where the real code + secrets already live), and pushes results back. No inbound ports, no
+second deployment, no user code on Loupe's box.
+
+```python
+loupe.init(api_key=..., worker=True)   # background thread connects OUT, waits for branch jobs
+```
+
+This is the **control-plane / execution-plane** split, the same shape as a self-hosted
+GitHub Actions runner or a Temporal worker. Loupe server = job queue + router; the user's
+embedded worker = the thing that actually executes.
+
+**What it requires (the reason it's deferred, not trivial).**
+- A **job queue** on the server (replay jobs) → revisits **A5** (BackgroundTasks → a real
+  broker, e.g. Redis/Celery, once there's cross-process work).
+- **Worker registration + auth** (which worker may pull which project's jobs).
+- An **outbound transport** (long-poll or websocket) so no inbound port is opened.
+- **Retries / liveness / result push-back**, i.e. a small distributed-execution system.
+- **Replay-safety enforcement at the worker** — write tools must honour `replay_safe`
+  (A9) so a prod-embedded worker can't double-charge a card on "⑂ Branch".
+
+**Safety posture (carry this forward).** A worker embedded in **production** means a branch
+click re-runs *real* tools. Intended guardrails: run the worker in **staging** by default,
+and enforce per-tool replay-safe flags (read-only → live; dangerous → ghost). These align
+with the side-effect policy already locked in **A9**.
+
+**When we'd build it.** After the killer demo (Track D) and the B-blockers, and only if we
+push toward a **hosted product** where a non-developer clicks "branch" against a live system.
+For the developer-debugging demo, local `loupe replay` stays the answer. Until then, every
+new design choice should *not* foreclose this path (e.g. keep branch lineage on the trace so
+a worker-produced branch ingests identically — already true via **B2 → A**).
+
+---
+
+## Consolidated build backlog (from the B1–B7 decisions)
+
+Ordered schema → server → SDK → dashboard → docs so each step builds on the last. This is
+the agreed work to apply when building resumes.
+
+1. **DB migration (Alembic)** — add `traces.replay_mode TEXT NULL`. *(B3)*
+2. **Server `ingest_trace`** ([traces.py](server/app/routers/traces.py)) — (a) persist
+   `replay_mode` from the payload; (b) auto-create a `replays` row when the trace has
+   `branched_from_*` and none exists yet, with `modifications = {branch_span_id, new_output?}`
+   and a `diff_summary` computed vs the original (idempotent — skip if a row exists). *(B2, B3)*
+3. **Server branch endpoint** ([replays.py](server/app/routers/replays.py)) — set
+   `replay_mode='server'` on the placeholder trace; gate live LLM re-execution behind
+   `ALLOW_SERVER_SIDE_LLM_REPLAY` (optional per-key/day cap). *(B3, B7)*
+4. **Server config** ([config.py](server/app/config.py)) — add `ALLOW_SERVER_SIDE_LLM_REPLAY`
+   (default true). *(B7)*
+5. **SDK** ([core.py](sdk/loupe/core.py) + [models.py](sdk/loupe/models.py)) — set
+   `replay_mode='sdk'` in the trace payload when a replay plan is active. *(B3)*
+6. **Schema exposure** — add `replay_mode` to server `TraceDetail`
+   ([schemas.py](server/app/schemas.py)) and dashboard `TraceDetail`
+   ([lib/api.ts](dashboard/lib/api.ts)). *(B3)*
+7. **Dashboard `BranchDiff`** ([BranchDiff.tsx](dashboard/components/BranchDiff.tsx)) —
+   prefer `trace.replay_mode`, fall back to `inferKind`; extend the frozen note with the
+   blended-cost caveat. *(B3, B5)*
+8. **Labeling (B1)** — make the two modes explicit in the UI: server-side = "preview
+   (LLM-only, tools not re-run)", SDK-side = "true branch (edits propagate)" — dashboard
+   branch button + diff caveat.
+9. **Docs** — README "What replay guarantees / does not" + boundary note in
+   [docs/design-deterministic-replay.md](docs/design-deterministic-replay.md) *(B6)*;
+   server-side-keys note for self-host *(B7-A)*.
+10. **Phase 7 wrap-up (already pending)** — `notes/26-branch-diff-view.md` (incl. the
+    stale-server debugging story) + `notes/README.md` index + commit; and decide the old
+    lineage-less test branches (delete the junk `636c6be8` vs leave all).
+
+> Items 1–7 are a coherent migration-backed change set; 8–9 are docs/UX; 10 closes Phase 7.
 
 ---
 
