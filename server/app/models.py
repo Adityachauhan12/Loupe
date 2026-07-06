@@ -182,3 +182,104 @@ class Replay(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+# ── v2.2: Prompt CI/CD (suites + runs) ─────────────────────────────────────
+# A "golden suite" is a named collection of traces used as a regression test set
+# for a prompt. B8.1: stored by *reference* (join table), never copied — traces
+# are immutable, so a snapshot buys nothing. See ARCHITECTURE_DECISIONS.md B8.
+
+
+class Suite(Base):
+    __tablename__ = "suites"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.gen_random_uuid(),
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    # B8.3: optional per-suite rubric; null → judge uses the global default.
+    judge_rubric: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    suite_traces: Mapped[list[SuiteTrace]] = relationship(
+        back_populates="suite", cascade="all, delete-orphan"
+    )
+    runs: Mapped[list[SuiteRun]] = relationship(
+        back_populates="suite", cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (Index("idx_suites_project", "project_id"),)
+
+
+class SuiteTrace(Base):
+    """Join table: which traces belong to a suite (B8.1, reference storage)."""
+
+    __tablename__ = "suite_traces"
+
+    suite_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("suites.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    trace_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("traces.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    added_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    suite: Mapped[Suite] = relationship(back_populates="suite_traces")
+
+    __table_args__ = (Index("idx_suite_traces_trace", "trace_id"),)
+
+
+class SuiteRun(Base):
+    """One execution of a suite against a new prompt (B8.2). Read as a whole,
+    so per-trace results live in a single JSONB column rather than a child table."""
+
+    __tablename__ = "suite_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.gen_random_uuid(),
+    )
+    suite_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("suites.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(
+        String(16), server_default="running", nullable=False
+    )  # 'running' | 'done' | 'error'
+    prompt_override: Mapped[str | None] = mapped_column(Text)
+    model_override: Mapped[str | None] = mapped_column(Text)
+    # B8.4: which judge backend ran this — e.g. 'groq/llama-3.3-70b', 'claude/sonnet-4-6'.
+    judge_backend: Mapped[str | None] = mapped_column(Text)
+    total: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    passed: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    regressed: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    improved: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    errored: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    # Per-trace verdicts: [{trace_id, new_trace_id, verdict, score_source,
+    #   reasoning, confidence, deterministic_checks}, ...]
+    results: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    error: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    suite: Mapped[Suite] = relationship(back_populates="runs")
+
+    __table_args__ = (Index("idx_suite_runs_suite", "suite_id"),)
