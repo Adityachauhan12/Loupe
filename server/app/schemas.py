@@ -159,3 +159,58 @@ class BranchIn(BaseModel):
 class BranchCreated(BaseModel):
     replay_id: uuid.UUID
     new_trace_id: uuid.UUID
+
+
+# ── v2.2: suites (Prompt CI/CD) ────────────────────────────────────────────
+
+
+class SuiteIn(BaseModel):
+    name: str
+    trace_ids: list[uuid.UUID] = Field(default_factory=list)
+    judge_rubric: str | None = None
+
+
+class SuiteCreated(BaseModel):
+    suite_id: uuid.UUID
+
+
+class SuiteOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    judge_rubric: str | None
+    trace_count: int
+    created_at: datetime
+
+
+class SuiteRunIn(BaseModel):
+    """Run a suite against a new prompt. `prompt_override` is the changed prompt
+    text; `judge_backend` overrides the default ('groq/...' or 'claude/...')."""
+
+    prompt_override: str | None = None
+    model_override: str | None = None
+    judge_backend: str | None = None
+
+
+class SuiteRunCreated(BaseModel):
+    suite_run_id: uuid.UUID
+
+
+class SuiteRunOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    suite_id: uuid.UUID
+    status: str
+    prompt_override: str | None
+    model_override: str | None
+    judge_backend: str | None
+    total: int
+    passed: int
+    regressed: int
+    improved: int
+    errored: int
+    results: list[dict[str, Any]] | None
+    error: dict[str, Any] | None
+    started_at: datetime
+    ended_at: datetime | None
+    created_at: datetime

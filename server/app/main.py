@@ -7,7 +7,7 @@ from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
 from app.config import settings
-from app.routers import replays, traces
+from app.routers import replays, suites, traces
 
 # ── Sentry ─────────────────────────────────────────────────────────────────
 # Only activates when SENTRY_DSN is set — dev works without it.
@@ -49,6 +49,8 @@ logging.basicConfig(
 app = FastAPI(title="Loupe", version="0.1.0")
 app.include_router(traces.router)
 app.include_router(replays.router)
+app.include_router(suites.router)
+app.include_router(suites.runs_router)
 
 
 @app.get("/health")
