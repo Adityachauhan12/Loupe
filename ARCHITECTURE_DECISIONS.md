@@ -38,9 +38,10 @@
 | **B5** | **Cost/token honesty inside a branched trace** | ✅ RESOLVED → (A) blended + note |
 | **B6** | **Replay boundary — what is actually replayable (external state)** | ✅ RESOLVED → (A) document boundary |
 | **B7** | **Authz & cost of server-side branch (whose API keys?)** | ✅ RESOLVED → (A)+(B) document + guard |
-| B8 | Judge / suite infra (v2.2) — the next big commitment | 🔵 |
+| **B8** | **Judge / suite infra (v2.2)** — expanded into B8.1–B8.4 | ✅ RESOLVED (see below) |
 | B9 | Replay-plan concurrency (ContextVar / async / threads) | 🔵 |
 | B10 | Embedded outbound worker (server-side branch runs real tools) — B1 option (3) | 🔵 PLANNED (future) |
+| **B11** | **PII / secret redaction — before capture and before the judge** | 🟡 OPEN (needs decision) |
 
 ---
 
@@ -486,14 +487,83 @@ deployments. Don't build tenant billing.
 
 ---
 
-### B8 — Judge / suite infrastructure (v2.2) 🔵 FUTURE
+### B8 — Judge / suite infrastructure (v2.2) ✅ RESOLVED → B8.1–B8.4
 
-Not blocking now, but the next *big* architectural commitment after the replay/diff loop:
-golden suites of saved traces, a `JudgeService` (LLM scores replay vs original as
-equivalent/regressed/improved), suite-run storage, and a GitHub Action that runs the suite
-on prompt-changing PRs. Surfaces its own decisions (judge model + prompt, scoring rubric,
-suite storage shape, how a PR maps to a prompt change). Flagged here so it's on the radar;
-we open it only after Part B blockers and the killer demo (Track D) are done.
+> **Decided (2026-07-03).** The v2.2 "Prompt CI/CD" umbrella — golden suites of saved traces,
+> a `JudgeService` scoring replay-vs-original, suite-run storage, CLI, and a GitHub Action —
+> is now designed. The four sub-decisions below are locked. Plain-language walkthrough with
+> examples: [docs/concepts-explained.md](docs/concepts-explained.md). Build order: DB →
+> JudgeService → endpoints → CLI → GitHub Action.
+
+#### B8.1 — Suite storage: reference vs copy ✅ (A) reference, join table
+
+**Tension.** A suite is a *collection* of traces — store trace **IDs** (by reference) or
+**copy** each trace's data into the suite?
+**Decision: (A) by reference, via a `suite_traces` join table.** Traces are **immutable** in
+Loupe (never updated post-ingest), so the only real benefit of copying — a frozen snapshot —
+doesn't apply. Matches **A4** (single source of truth in `traces`). A join table keeps
+membership queryable both ways with FK integrity (vs a JSONB array, which loses FKs/indexing).
+```
+suites:        id, name, project_id, judge_rubric TEXT NULL, created_at
+suite_traces:  suite_id → suites.id,  trace_id → traces.id   (composite PK)
+```
+
+#### B8.2 — Shape of a suite run ✅ (A) JSONB `results`
+
+**Tension.** A run needs a **summary** (pass/fail counts for the PR comment) and **per-trace
+detail** (verdict, reasoning, `new_trace_id` for the diff view). Per-trace detail in a JSONB
+column, or a normalized child table?
+**Decision: (A) one `suite_runs` row, per-trace results in a JSONB column.** A run is always
+read *as a whole* (PR comment, one detail page) — never cross-run analytics — so a normalized
+table buys nothing yet. Same call as span payloads in JSONB (**A1**). Revisit only if real
+cross-run analytics appears.
+```
+suite_runs:
+  id, suite_id, status ('running'|'done'|'error'),
+  prompt_override TEXT, model_override TEXT NULL, judge_backend TEXT,
+  total, passed, regressed, improved, errored,
+  results JSONB,   -- [{trace_id, new_trace_id, verdict, score_source,
+                   --   reasoning, confidence, deterministic_checks}, ...]
+  started_at, ended_at, created_at
+```
+
+#### B8.3 — Judge rubric: global vs per-suite ✅ (A) global default + optional override
+
+**Tension.** One rubric for all suites, or one per suite?
+**Decision: (A) a global default rubric + optional per-suite override
+(`suites.judge_rubric TEXT NULL`).** A suite works with zero config (default); a
+domain-specific suite (e.g. JSON extraction) can supply stricter criteria. Bonus: the shared
+default **prompt-caches** across judgments (~90% cheaper reads). Mandatory-per-suite (C) adds
+friction for the demo; global-only (B) can't express domain-specific criteria.
+
+#### B8.4 — Scoring: agentic vs hybrid; judge backend ✅ hybrid + pluggable backend
+
+**Tension.** Should the scorer be an **agent** (multi-step) or a **single Claude call +
+regex**? And which model/provider judges?
+**Decision — hybrid, single-call judge, pluggable backend:**
+- **Not agentic.** Comparing two short outputs is a **classification** task — a single
+  rubric-driven call is as accurate as an agent, cheaper, and with fewer failure modes.
+  (Agentic here would be an over-engineering red flag.)
+- **Deterministic checks first (free).** Structured/tool spans → regex/assert
+  (`{"genre": "Sci-Fi"}` → `assert genre == expected`). No LLM call. Can't judge free-text
+  *meaning*.
+- **LLM judge only on the free-text final answer.** A single structured-output call →
+  `{label: equivalent|improved|regressed, reasoning, confidence}`, driven by the B8.3 rubric.
+- **Pluggable backend (`judge_backend`):**
+  - **Default for development: free Groq/Llama (Llama 3.3 70B)** — keeps the whole loop **$0**
+    to build and self-host; reuses the SDK's existing Groq integration.
+  - **Optional for demo / production: Claude Sonnet 4.6** — stronger `improved` vs `regressed`
+    nuance; per-suite/run override.
+- **Cost context (why this is fine either way).** A 100-trace run is <$1 on Claude
+  (~$0.39 Sonnet with prompt-cache + Batch API, 50% off), single-double-digit $/month at
+  typical volume. **Free-tier caveat:** one ~100-trace run ≈ ~180k tokens ≈ a whole ~200k free
+  daily budget, and free RPM limits can throttle large runs — so the free backend is for
+  **demos + small suites** (~10–15 traces ≈ ~27k tokens/run), not frequent large-suite CI.
+  Demo strategy: **iterate on free Groq, capture final screenshots on Sonnet.**
+
+**Why this is portfolio-strong.** Provider-pluggable judge defaulting to a free backend =
+"zero-cost to self-host, Claude as an opt-in quality upgrade" — a clear "I thought about cost
+and accessibility" signal, on top of the production-trace → regression-suite → PR-gate loop.
 
 ---
 
@@ -548,6 +618,65 @@ push toward a **hosted product** where a non-developer clicks "branch" against a
 For the developer-debugging demo, local `loupe replay` stays the answer. Until then, every
 new design choice should *not* foreclose this path (e.g. keep branch lineage on the trace so
 a worker-produced branch ingests identically — already true via **B2 → A**).
+
+---
+
+### B11 — PII / secret redaction: before capture and before the judge 🟡 OPEN
+
+**The tension.** Loupe's capture is **shape-agnostic** (`_to_jsonable` in
+[sdk/loupe/core.py](sdk/loupe/core.py) records *any* value as JSON — see
+[docs/concepts-explained.md](docs/concepts-explained.md) §6). That's the right call for
+"works on any project with zero config," but it has a direct side-effect: if a secret flows
+through an instrumented **tool argument** or an **LLM prompt** (`login(password=...)`, a
+prompt containing an SSN), Loupe records it in **plaintext JSONB** in Postgres. Verified:
+the SDK has **no redaction today** (`grep -riE 'redact|scrub|mask|sensitive|secret'` over
+`sdk/loupe/` returns nothing). This is a real leak class shared by every "capture everything"
+observability tool (Sentry, Datadog, LangSmith, Helicone) — none of it is Loupe-specific,
+and all of them solve it with redaction.
+
+**Why v2.2 raises the stakes.** The `JudgeService` (v2.2) sends trace payloads to **Anthropic**
+(a third party) to score them. So a secret in a trace isn't just "sitting in our DB" — it
+**leaves to an external LLM provider**. Redaction is therefore needed at *two* boundaries:
+(1) before the SDK sends anything to the server, and (2) before the server sends a payload to
+the judge.
+
+**The "logged vs merely used" distinction (the mitigation's foundation).** A secret used
+*inside* a function is already safe; only secrets passed *as traced input* or embedded *in a
+prompt* leak. `search(id)` reading `os.getenv("API_KEY")` internally never appears in a
+trace; `search(id, api_key="sk-...")` does. So the primary defense is partly a **usage
+convention** (keep secrets in env/secret-managers, out of tool args and prompts) and partly
+**code** (scrub what does slip through).
+
+**Options.**
+- **(A) SDK-side redaction before serialization + a doc convention.** Add a scrub step in/before
+  `_to_jsonable`: **key-based** denylist (`password`, `token`, `secret`, `api_key`,
+  `authorization`, `cookie` → `"[REDACTED]"`), optional **value-based** regex (JWT/card/key
+  shapes), and `loupe.init(redact_keys=[...])` for user-defined fields. **On by default**
+  ("secure by default"). Plus a per-span opt-out (`@loupe.trace(capture=False)`) for auth
+  flows. Secrets never leave the user's process.
+- **(B) Server-side redaction only.** Scrub at ingest / before the judge. Simpler for the SDK,
+  but the secret has *already left the user's machine* and hit our DB — weaker boundary.
+- **(C) Both — defense in depth.** SDK-side scrub (primary) **and** a server-side scrub of the
+  payload the judge receives (belt-and-suspenders for the third-party hop). Plus existing
+  server hygiene (TLS in transit, hashed API keys, access control, retention).
+- **(D) Do nothing; document the convention only.** "Don't put secrets in tool args/prompts."
+  Zero code, but one careless user leaks — bad default for a tool people self-host.
+
+**Tradeoffs.** (A) fixes it at the strongest boundary (never leaves the process) for modest
+SDK work, but a denylist is never exhaustive. (B) is easy but lets the secret reach our DB
+first. (C) is the correct production posture and the natural fit for v2.2 (the judge hop
+*must* be scrubbed regardless), at a little more work. (D) is a real footgun for a
+self-hosted MVP.
+
+**My recommendation: (A) now (on-by-default SDK redaction + per-span opt-out + doc
+convention), and the judge-boundary half of (C) as part of v2.2** — the `JudgeService` scrubs
+the payload before sending to Anthropic even if SDK redaction is on, since traces may predate
+the SDK feature. Don't build full value-based ML redaction; a sensible key denylist + regex
+for obvious secret shapes + user-configurable keys is the right scope.
+
+**Decision needed.** SDK-side on-by-default redaction (A), server-only (B), both/defense-in-depth
+(C), or document-the-convention-only (D)? And: is redaction **on by default** (recommended) or
+opt-in?
 
 ---
 
