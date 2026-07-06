@@ -18,5 +18,10 @@ class Settings(BaseSettings):
     # through the stored output instead of re-executing live).
     allow_server_side_llm_replay: bool = True
 
+    # B8.4: default judge backend for suite runs. Format "<provider>/<model>".
+    # Groq/Llama is free (zero-cost dev + self-host); switch to "claude/claude-sonnet-4-6"
+    # for stronger semantic verdicts (per suite or per run). Overridable via env.
+    judge_backend: str = "groq/llama-3.3-70b-versatile"
+
 
 settings = Settings()
