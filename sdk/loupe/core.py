@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import inspect
 import traceback
 import uuid
 from collections.abc import Callable
@@ -37,9 +38,57 @@ def init(api_key: str, host: str = "http://localhost:8000") -> None:
     _client = LoupeClient(api_key=api_key, host=host)
 
 
+def _emit_trace(
+    trace_name: str,
+    ctx: _TraceContext,
+    rplan: Any,
+    started_at: datetime,
+    status: str,
+    error_info: dict[str, Any] | None,
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+    result: Any,
+) -> None:
+    """Build a TracePayload from a completed run and enqueue it."""
+    ended_at = datetime.now(timezone.utc)
+    duration_ms = int((ended_at - started_at).total_seconds() * 1000)
+
+    # Roll child-span tokens/cost up to the trace so the list + detail views
+    # show a total instead of "—". None if no span reported the metric.
+    total_tokens = sum(
+        (s.total_tokens for s in ctx.spans if s.total_tokens), start=0
+    ) or None
+    span_costs = [s.cost_usd for s in ctx.spans if s.cost_usd is not None]
+    total_cost_usd = sum(span_costs) if span_costs else None
+
+    payload = TracePayload(
+        id=ctx.trace_id,
+        name=f"{trace_name} (branch)" if rplan is not None else trace_name,
+        status=status,
+        input=_safe_serialize(args, kwargs),
+        output=_safe_serialize(result),
+        error=error_info,
+        started_at=started_at,
+        ended_at=ended_at,
+        duration_ms=duration_ms,
+        total_tokens=total_tokens,
+        total_cost_usd=total_cost_usd,
+        is_replay=rplan is not None,
+        branched_from_trace_id=rplan.branched_from_trace_id if rplan else None,
+        branched_from_span_id=rplan.branched_from_span_id if rplan else None,
+        replay_mode="sdk" if rplan is not None else None,
+        spans=ctx.spans,
+    )
+    _client.enqueue(payload)  # type: ignore[union-attr]
+
+
 def trace(_fn: F | None = None, *, name: str | None = None) -> Any:
     """
     Decorator that records a function call as a Loupe trace.
+
+    Works with plain functions and with generator functions (e.g. an SSE
+    streaming agent) — for a generator the trace stays open until the
+    generator is exhausted, so spans created while streaming are captured.
 
     Usage:
         @loupe.trace
@@ -50,6 +99,47 @@ def trace(_fn: F | None = None, *, name: str | None = None) -> Any:
     """
     def decorator(fn: F) -> F:
         trace_name = name or fn.__name__
+
+        if inspect.isgeneratorfunction(fn):
+
+            @functools.wraps(fn)
+            def gen_wrapper(*args: Any, **kwargs: Any) -> Any:
+                if _client is None:
+                    yield from fn(*args, **kwargs)
+                    return
+
+                started_at = datetime.now(timezone.utc)
+                ctx = _TraceContext(trace_id=uuid.uuid4())
+                token = _current_trace.set(ctx)
+
+                rplan = _replay.get_plan()
+                if rplan is not None:
+                    rplan.new_trace_id = ctx.trace_id
+
+                collected: list[Any] = []
+                error_info: dict[str, Any] | None = None
+                status = "success"
+
+                try:
+                    for item in fn(*args, **kwargs):
+                        collected.append(item)
+                        yield item
+                except Exception as exc:
+                    status = "error"
+                    error_info = {
+                        "type": type(exc).__name__,
+                        "message": str(exc),
+                        "traceback": traceback.format_exc(),
+                    }
+                    raise
+                finally:
+                    _current_trace.reset(token)
+                    _emit_trace(
+                        trace_name, ctx, rplan, started_at,
+                        status, error_info, args, kwargs, collected,
+                    )
+
+            return gen_wrapper  # type: ignore[return-value]
 
         @functools.wraps(fn)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -82,26 +172,10 @@ def trace(_fn: F | None = None, *, name: str | None = None) -> Any:
                 raise
             finally:
                 _current_trace.reset(token)
-                ended_at = datetime.now(timezone.utc)
-                duration_ms = int((ended_at - started_at).total_seconds() * 1000)
-
-                payload = TracePayload(
-                    id=ctx.trace_id,
-                    name=f"{trace_name} (branch)" if rplan is not None else trace_name,
-                    status=status,
-                    input=_safe_serialize(args, kwargs),
-                    output=_safe_serialize(result),
-                    error=error_info,
-                    started_at=started_at,
-                    ended_at=ended_at,
-                    duration_ms=duration_ms,
-                    is_replay=rplan is not None,
-                    branched_from_trace_id=rplan.branched_from_trace_id if rplan else None,
-                    branched_from_span_id=rplan.branched_from_span_id if rplan else None,
-                    replay_mode="sdk" if rplan is not None else None,
-                    spans=ctx.spans,
+                _emit_trace(
+                    trace_name, ctx, rplan, started_at,
+                    status, error_info, args, kwargs, result,
                 )
-                _client.enqueue(payload)
 
         return wrapper  # type: ignore[return-value]
 

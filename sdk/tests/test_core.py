@@ -186,3 +186,110 @@ def test_span_context_manager_outside_trace_is_noop():
     with loupe.span("orphan", type="tool") as s:
         s.output = {"ok": True}
     # no crash, no spans recorded anywhere
+
+
+# ── @trace on generator functions (e.g. SSE streaming agents) ───────────────────
+
+def _capture_traces(monkeypatch) -> list:
+    """Init loupe and capture every enqueued TracePayload into a list."""
+    import loupe.core as core
+
+    loupe.init(api_key="test", host="http://localhost:19999")
+    captured: list = []
+    monkeypatch.setattr(core._client, "enqueue", captured.append)
+    return captured
+
+
+def test_trace_on_generator_keeps_trace_open_for_spans(monkeypatch):
+    captured = _capture_traces(monkeypatch)
+
+    @loupe.trace(name="streamer")
+    def stream():
+        # A span created mid-stream must land under this trace.
+        with loupe.span("mid", type="tool") as s:
+            s.output = {"ok": True}
+        for i in range(3):
+            yield i
+
+    result = list(stream())
+
+    assert result == [0, 1, 2]
+    assert len(captured) == 1
+    payload = captured[0]
+    assert payload.name == "streamer"
+    assert payload.status == "success"
+    # The span created while streaming is captured under the trace.
+    assert len(payload.spans) == 1
+    assert payload.spans[0].name == "mid"
+    # Yielded items are recorded as the trace output.
+    assert payload.output is not None
+
+
+def test_trace_on_generator_records_error(monkeypatch):
+    captured = _capture_traces(monkeypatch)
+
+    @loupe.trace(name="boom")
+    def stream():
+        yield 1
+        raise ValueError("kaboom")
+
+    with pytest.raises(ValueError):
+        list(stream())
+
+    assert len(captured) == 1
+    payload = captured[0]
+    assert payload.status == "error"
+    assert payload.error is not None
+    assert payload.error["type"] == "ValueError"
+
+
+def test_trace_rolls_up_span_tokens_and_cost(monkeypatch):
+    from decimal import Decimal
+
+    captured = _capture_traces(monkeypatch)
+
+    @loupe.trace(name="agent")
+    def run():
+        with loupe.span("call1", type="llm") as s:
+            s.total_tokens = 789
+            s.cost_usd = Decimal("0.001")
+        with loupe.span("call2", type="llm") as s:
+            s.total_tokens = 1325
+            s.cost_usd = Decimal("0.002")
+        with loupe.span("tool", type="tool") as s:  # no tokens/cost
+            s.output = {"ok": True}
+
+    run()
+
+    payload = captured[0]
+    assert payload.total_tokens == 789 + 1325
+    assert payload.total_cost_usd == Decimal("0.003")
+
+
+def test_trace_totals_are_none_when_no_span_reports_them(monkeypatch):
+    captured = _capture_traces(monkeypatch)
+
+    @loupe.trace(name="tool_only")
+    def run():
+        with loupe.span("tool", type="tool") as s:
+            s.output = {"ok": True}
+
+    run()
+
+    payload = captured[0]
+    assert payload.total_tokens is None
+    assert payload.total_cost_usd is None
+
+
+def test_trace_on_generator_is_lazy_and_noop_without_init(monkeypatch):
+    import loupe.core as core
+
+    monkeypatch.setattr(core, "_client", None)
+
+    @loupe.trace
+    def stream():
+        yield "a"
+        yield "b"
+
+    # Without init, it still works as a plain generator.
+    assert list(stream()) == ["a", "b"]

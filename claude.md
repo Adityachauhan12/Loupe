@@ -43,7 +43,31 @@ Update this checklist as you go:
 - [x] Deployed: Vercel (dashboard) + Render (server) + Neon (Postgres)
 - [x] Demo data seeded on live instance
 - [x] README complete with architecture diagram (screenshots + live URLs pending)
-- [x] examples/cinerater agent instrumented with Loupe
+- [x] examples/cinerater agent instrumented with Loupe (legacy toy demo — kept for the self-contained quickstart)
+- [x] **Real CineRater app instrumented with Loupe** — the live Django app at `~/Desktop/CineRater` is now the primary demo source (see "Real CineRater Integration" below)
+
+---
+
+## Real CineRater Integration
+
+The demo agent is now the **real CineRater app** (separate git repo at `~/Desktop/CineRater`),
+not the toy in `examples/cinerater/`. CineRater is a Django + React app whose AI pipelines
+call Groq through the **OpenAI SDK** (`base_url` = Groq's OpenAI-compatible endpoint).
+
+**How it's wired (all in `~/Desktop/CineRater/backend`):**
+- `services/loupe_config.py` — bootstrap: `init_loupe()` + `instrument(client)`. No-op if `LOUPE_API_KEY` is unset, so it's safe to leave in permanently.
+- Each service instruments its module-level Groq client and traces its entry point:
+  - `services/ai_agent_service.py` — CineBot, `@loupe.trace(name="cinebot")` on `run_agent_stream` (a **generator** / SSE stream)
+  - `services/multi_agent_recommendation_service.py` — `@loupe.trace(name="multi_agent_recommend")` on `MultiAgentRecommendationService.get_recommendations`
+  - `services/rag_service.py` — `@loupe.trace(name="rag_qa")` on `RAGService.answer`
+- Env: `LOUPE_API_KEY`, `LOUPE_HOST` in `backend/.env` (currently → `http://localhost:8000`).
+- SDK installed editable: `venv/bin/python -m pip install -e ~/Desktop/Loupe_Project/sdk` (that venv's `pip` shebang is stale — always call pip via `python -m pip`).
+
+**SDK changes this integration required (in this repo):**
+- `@loupe.trace` now supports **generator functions** — keeps the trace open until the generator is exhausted, so spans created mid-stream (CineBot's tool loop) are captured. See `sdk/loupe/core.py` (`gen_wrapper`) + tests in `tests/test_core.py`.
+- `instrument_openai(client, provider="groq")` — optional `provider` label (Groq via the OpenAI SDK should report `groq`, not `openai`) and now captures `tool_calls` in span output.
+
+**Caveat:** `LOUPE_API_KEY` must be valid on whatever `LOUPE_HOST` points at. The key currently in `backend/.env` was minted for the deployed Render server; a locally-run Loupe server has its own DB and may not recognise it — mint/seed a local key if traces don't land.
 
 ---
 
@@ -87,7 +111,7 @@ loupe/
 │   │   └── ReplayDiff.tsx        # side-by-side diff component
 │   └── ...
 ├── examples/
-│   └── cinerater/                # stripped-down CineRater agent instrumented with Loupe
+│   └── cinerater/                # legacy toy agent — self-contained quickstart only (NOT the demo source)
 ├── docker-compose.yml            # Postgres + server (dashboard runs separately in dev)
 ├── CLAUDE.md                     # this file
 └── README.md
