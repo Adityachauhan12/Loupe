@@ -1,0 +1,77 @@
+name: "Loupe Prompt Regression Check"
+description: >-
+  Replay a Loupe golden suite against a changed prompt and block the PR on any
+  regression. A thin composite wrapper over the `loupe suite run` CLI.
+author: "Loupe"
+branding:
+  icon: "search"
+  color: "purple"
+
+inputs:
+  suite-id:
+    description: "The Loupe suite id to run against."
+    required: true
+  prompt-file:
+    description: "Path to the changed prompt file (its PR-branch content is tested)."
+    required: true
+  loupe-host:
+    description: "Loupe server URL (e.g. https://loupe.onrender.com)."
+    required: true
+  api-key:
+    description: "Loupe API key (LOUPE_API_KEY). Pass a repo secret."
+    required: true
+  backend:
+    description: "Optional judge backend override, e.g. claude/claude-sonnet-4-6."
+    required: false
+    default: ""
+  comment:
+    description: "Post the result as a PR comment (true/false)."
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install Loupe SDK
+      shell: bash
+      # Needs a loupe-sdk version that includes the `suite` CLI (v2.2+).
+      run: pip install --quiet "loupe-sdk>=0.2.0"
+
+    - name: Run suite
+      id: run
+      shell: bash
+      env:
+        LOUPE_HOST: ${{ inputs.loupe-host }}
+        LOUPE_API_KEY: ${{ inputs.api-key }}
+      run: |
+        set +e
+        BACKEND_ARG=""
+        if [ -n "${{ inputs.backend }}" ]; then BACKEND_ARG="--backend ${{ inputs.backend }}"; fi
+        loupe suite run "${{ inputs.suite-id }}" --prompt "${{ inputs.prompt-file }}" $BACKEND_ARG \
+          | tee /tmp/loupe-out.txt
+        echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+    - name: Comment on PR
+      if: ${{ inputs.comment == 'true' && github.event_name == 'pull_request' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        {
+          echo "### 🔍 Loupe — prompt regression check"
+          echo ""
+          echo '```'
+          cat /tmp/loupe-out.txt
+          echo '```'
+        } > /tmp/loupe-comment.md
+        gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/loupe-comment.md || true
+
+    - name: Fail on regression
+      shell: bash
+      # The CLI exits non-zero when any trace regressed → this step fails → red check.
+      run: exit ${{ steps.run.outputs.exit_code }}

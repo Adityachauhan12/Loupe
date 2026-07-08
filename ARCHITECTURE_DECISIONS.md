@@ -565,6 +565,40 @@ regex**? And which model/provider judges?
 "zero-cost to self-host, Claude as an opt-in quality upgrade" — a clear "I thought about cost
 and accessibility" signal, on top of the production-trace → regression-suite → PR-gate loop.
 
+#### B8.5 — GitHub Action packaging & gate policy (D1–D5) ✅
+
+**D1 — Action packaging: composite (wraps the CLI), not a TS action.** The CLI already
+does the whole job (call → poll → summary → exit code), so a full TypeScript action would
+re-implement it. The Action is a thin composite `action.yml`: set up Python → `pip install
+loupe-sdk` → `loupe suite run` → `gh pr comment`. One engine, two entry points (human CLI +
+CI). Deviates from CLAUDE.md's "small TS action" note — justified because the CLI didn't
+exist when that was written. *(A TS action remains an option purely for a resume bullet; not
+worth the duplication.)*
+
+**D2 — PR → suite/prompt mapping: explicit inputs.** The workflow passes `suite-id` and
+`prompt-file` explicitly (plus `loupe-host` / `api-key` secrets), and a `paths:` filter runs
+the Action only when the prompt file changes. The new prompt is the PR-branch content of
+`prompt-file` → `prompt_override`. Auto-detecting changed prompt files is future polish;
+explicit is deterministic and demo-clear.
+
+**D3 — PR comment + status check.** The status check is the **job's own exit code** — the
+CLI exits non-zero on a regression, the step fails, the PR check goes red (no separate
+commit-status API). The comment is posted with `gh pr comment` (`GITHUB_TOKEN`) from the
+CLI's summary output (counts + per-regression reasoning + diff links).
+
+**D4 — Demo lives in-monorepo first.** `examples/prompt-ci-demo/` (workflow + a prompt file,
+reusing the cinerater agent). GitHub-hosted runners can't reach `localhost`, so the demo
+points at the **deployed Render** Loupe via repo secrets; free Groq judge + a small suite
+(~10–15 traces) keeps it ~$0. A separate public demo repo (more authentic "install
+loupe-action in a consuming repo" story, better screenshot) is a later step.
+
+**D5 — Gate policy: zero-tolerance, no confidence gating.** Any `regressed` verdict blocks
+the merge (CLI `exit 1` when `regressed > 0`). We deliberately do **not** gate on the judge's
+self-reported `confidence`: it's an unreliable number, and gating a shaky signal on another
+shaky signal adds noise, not safety. Confidence is stored in `results` for human review only.
+A `--max-regressions N` knob (default 0) is left as an optional future loosening for large
+suites. *(Already implemented in the CLI; no code change.)*
+
 ---
 
 ### B9 — Replay-plan concurrency 🔵 FUTURE
