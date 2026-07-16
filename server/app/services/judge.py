@@ -31,18 +31,25 @@ Verdict_Label = Literal["equivalent", "improved", "regressed"]
 # B8.3: the global default rubric. A suite may override it (suites.judge_rubric).
 DEFAULT_RUBRIC = """You are grading whether a prompt change improved, regressed, or left \
 unchanged an LLM agent's answer, by comparing the NEW output against the ORIGINAL output \
-for the same input.
+for the same input. These outputs are consumed by DOWNSTREAM CODE, not just read by a human.
 
-Grade on these criteria:
+Machine-readability is the dominant criterion. Apply this rule first, before anything else:
+- If the ORIGINAL output is structured (valid JSON, or an object with specific keys) and the \
+NEW output is NOT the same machine-readable shape (e.g. it became prose, prose wrapping the \
+value, changed/renamed/dropped keys, or is no longer parseable), that is ALWAYS "regressed" — \
+because downstream code that parsed the original will now break. A friendlier tone, extra \
+explanation, or nicer wording does NOT compensate for breaking the contract, and must never \
+be scored "improved" or "equivalent" on its own.
+
+Only after the shape contract is preserved, grade on:
 - Correctness & intent: does the new output still correctly address the user's input?
-- Usability: is it still valid/usable by downstream code (e.g. same JSON shape/keys when \
-the original was structured)?
-- Completeness: did it drop information the original had, or add useful information?
+- Completeness: did it drop information the original had, or add genuinely useful information?
 
 Return exactly one label:
-- "equivalent" — same meaning and usability; differences are cosmetic.
-- "improved"   — clearly better (more correct, more complete, or more usable).
-- "regressed"  — clearly worse (wrong, broken shape, or lost important information).
+- "equivalent" — same machine-readable shape AND same meaning; differences are cosmetic.
+- "improved"   — same usable shape, and clearly more correct or more complete.
+- "regressed"  — wrong, broke the shape/contract, no longer parseable, or lost important \
+information.
 """
 
 # JSON Schema for the verdict — used for Anthropic structured output and to validate

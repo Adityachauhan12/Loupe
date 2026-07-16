@@ -16,9 +16,47 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.models import Suite, SuiteRun, SuiteTrace, Trace
-from app.routers.suites import _run_suite
+from app.routers.suites import _judge_output, _run_suite
 from app.services.judge import Verdict
 from tests.conftest import make_engine, make_trace_payload
+
+
+# ── _judge_output: compare the LLM span the prompt controls, not trace output ─
+
+
+def _span(type_: str, output, ts_offset: int):
+    """Lightweight stand-in for a Span row (only the fields _judge_output reads)."""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        type=type_,
+        output=output,
+        started_at=datetime(2026, 1, 1, tzinfo=timezone.utc).replace(second=ts_offset),
+    )
+
+
+def test_judge_output_prefers_final_llm_span():
+    # Post-processed trace output ({"genre": ...}) differs from the LLM span's raw
+    # {"content": ...}. The judge must see the LLM span (what the prompt controls).
+    spans = [
+        _span("tool", {"rows": 3}, 0),
+        _span("llm", {"content": '{"genre": "Sci-Fi"}'}, 1),
+    ]
+    assert _judge_output(spans, {"genre": "Sci-Fi"}) == {"content": '{"genre": "Sci-Fi"}'}
+
+
+def test_judge_output_picks_latest_llm_by_start_time():
+    spans = [
+        _span("llm", {"content": "first"}, 2),
+        _span("llm", {"content": "final"}, 5),
+    ]
+    assert _judge_output(spans, {"x": 1}) == {"content": "final"}
+
+
+def test_judge_output_falls_back_to_trace_output_without_llm_span():
+    spans = [_span("tool", {"rows": 3}, 0)]
+    assert _judge_output(spans, {"answer": 42}) == {"answer": 42}
+    assert _judge_output([], {"answer": 42}) == {"answer": 42}
 
 
 async def _seed_suite(sf, project_id: uuid.UUID, n_traces: int = 2):

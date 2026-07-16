@@ -20,10 +20,11 @@ import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.auth import require_api_key
 from app.db import SessionLocal, get_db
-from app.models import ApiKey, Replay, Suite, SuiteRun, SuiteTrace, Trace
+from app.models import ApiKey, Replay, Span, Suite, SuiteRun, SuiteTrace, Trace
 from app.routers.replays import _run_replay
 from app.schemas import (
     SuiteCreated,
@@ -42,6 +43,24 @@ runs_router = APIRouter(prefix="/v1/suite_runs", tags=["suites"])
 
 
 # ── background task: replay each trace + judge ─────────────────────────────
+
+
+def _judge_output(spans: list[Span], trace_output: Any) -> Any:
+    """Pick the output the judge should compare.
+
+    Server-side replay only re-executes LLM spans, so it can never reproduce a
+    trace's *post-LLM* Python (e.g. a `json.loads` in the agent). Comparing
+    trace-level outputs would therefore flag a spurious "regression" for any
+    agent that post-processes the model's text — even when the prompt is
+    unchanged. The apples-to-apples signal the prompt actually controls is the
+    final LLM span's output, which both the original and the replay store as
+    ``{"content": ...}``. Fall back to the trace output when a trace has no LLM
+    span (nothing the prompt could have changed).
+    """
+    llm_spans = [s for s in spans if s.type == "llm"]
+    if not llm_spans:
+        return trace_output
+    return max(llm_spans, key=lambda s: s.started_at).output
 
 
 async def _run_suite(
@@ -69,7 +88,11 @@ async def _run_suite(
         try:
             async with SessionLocal() as db:
                 original = (
-                    await db.execute(select(Trace).where(Trace.id == original_trace_id))
+                    await db.execute(
+                        select(Trace)
+                        .where(Trace.id == original_trace_id)
+                        .options(selectinload(Trace.spans))
+                    )
                 ).scalar_one_or_none()
                 if original is None:
                     raise RuntimeError("trace not found")
@@ -106,7 +129,9 @@ async def _run_suite(
                 )
                 await db.commit()
                 original_input = original.input
-                original_output = original.output
+                # Compare the LLM output the prompt controls, not the trace-level
+                # output (which server replay can't reproduce). See _judge_output.
+                original_output = _judge_output(original.spans, original.output)
 
             # Reuse the v2.1 replay engine (opens its own session, updates the trace).
             await _run_replay(
@@ -120,9 +145,17 @@ async def _run_suite(
 
             async with SessionLocal() as db:
                 new_trace = (
-                    await db.execute(select(Trace).where(Trace.id == new_trace_id))
+                    await db.execute(
+                        select(Trace)
+                        .where(Trace.id == new_trace_id)
+                        .options(selectinload(Trace.spans))
+                    )
                 ).scalar_one_or_none()
-                new_output = new_trace.output if new_trace else None
+                new_output = (
+                    _judge_output(new_trace.spans, new_trace.output)
+                    if new_trace
+                    else None
+                )
 
             verdict = await judge_service.judge(
                 original_input=original_input,
