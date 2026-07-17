@@ -1,10 +1,16 @@
 """JudgeService — scores a replayed output against the original (v2.2, B8.4).
 
-Hybrid, two stages:
-  1. Deterministic pre-check (free, no LLM): if the new output is identical to the
+Hybrid, three stages (each free stage short-circuits before the paid one):
+  1. Deterministic equality (free, no LLM): if the new output is identical to the
      original (after canonicalising JSON), the verdict is `equivalent` immediately.
      This nips the common "the prompt change didn't affect this trace" case for $0.
-  2. LLM-as-judge (only when they differ): a single call scores the semantic verdict
+  2. Deterministic shape guard (free, no LLM): if the original output was structured
+     JSON and the new output is no longer parseable as the same shape (became prose,
+     or dropped keys), the verdict is `regressed` immediately. This encodes the
+     rubric's dominant machine-readability rule as *code* — the 70B judges routinely
+     rationalise a broken JSON contract as "improved" ("friendlier, more detailed"),
+     so we don't trust an LLM with a rule that's mechanically decidable.
+  3. LLM-as-judge (only when neither fires): a single call scores the semantic verdict
      against a rubric and returns guaranteed-valid JSON `{label, reasoning, confidence}`.
 
 Pluggable backend (`"<provider>/<model>"`):
@@ -111,7 +117,7 @@ def _canonical(value: Any) -> str:
 
 def deterministic_check(original_output: Any, new_output: Any) -> Verdict | None:
     """Return a free 'equivalent' verdict if the outputs are identical, else None
-    (escalate to the LLM judge)."""
+    (escalate to the shape guard / LLM judge)."""
     if _canonical(original_output) == _canonical(new_output):
         return Verdict(
             label="equivalent",
@@ -120,6 +126,80 @@ def deterministic_check(original_output: Any, new_output: Any) -> Verdict | None
             confidence=1.0,
             score_source="deterministic",
         )
+    return None
+
+
+def _structured_payload(output: Any) -> Any | None:
+    """Return the parsed JSON object/array `output` represents, else None.
+
+    LLM spans store their text wrapped as ``{"content": "<text>"}``; the real
+    payload is inside. Unwrap that envelope, then treat a dict/list as already
+    structured and a string as structured only if it parses to a dict/list. A
+    prose string (or a value that isn't JSON) returns None — "not structured".
+    """
+    val = output
+    if isinstance(val, dict) and set(val.keys()) == {"content"}:
+        val = val["content"]
+    if isinstance(val, (dict, list)):
+        return val
+    if isinstance(val, str):
+        s = val.strip()
+        if s[:1] in ("{", "["):
+            try:
+                parsed = json.loads(s)
+            except (ValueError, TypeError):
+                return None
+            if isinstance(parsed, (dict, list)):
+                return parsed
+    return None
+
+
+def shape_break_check(original_output: Any, new_output: Any) -> Verdict | None:
+    """Free 'regressed' verdict when a structured original loses its machine-readable
+    shape — the one rule the rubric declares dominant. Returns None (escalate to the
+    LLM) when the original wasn't structured, or the shape survived.
+
+    Fires only on unambiguous contract breaks:
+      - original was JSON, new output no longer parses as JSON (e.g. became prose);
+      - the JSON container type flipped (object <-> array), breaking key/index access;
+      - both are JSON objects, but the new one dropped keys the original provided.
+    Value changes and *added* keys keep a valid shape, so they escalate to the judge.
+    """
+    original = _structured_payload(original_output)
+    if original is None:
+        return None  # nothing structured to protect — let the judge decide
+
+    new = _structured_payload(new_output)
+    if new is None:
+        return Verdict(
+            label="regressed",
+            reasoning="Original output was structured JSON but the new output is not "
+            "parseable as JSON (e.g. became prose) — downstream code that parsed the "
+            "original would break.",
+            confidence=1.0,
+            score_source="shape_guard",
+        )
+
+    if type(original) is not type(new):  # object <-> array
+        return Verdict(
+            label="regressed",
+            reasoning="JSON container type changed "
+            f"({type(original).__name__} -> {type(new).__name__}) — downstream "
+            "key/index access on the original shape would break.",
+            confidence=1.0,
+            score_source="shape_guard",
+        )
+
+    if isinstance(original, dict) and isinstance(new, dict):
+        dropped = set(original.keys()) - set(new.keys())
+        if dropped:
+            return Verdict(
+                label="regressed",
+                reasoning="New output dropped keys the original provided: "
+                f"{sorted(dropped)} — breaks the machine-readable contract.",
+                confidence=1.0,
+                score_source="shape_guard",
+            )
     return None
 
 
@@ -209,11 +289,16 @@ async def judge(
     rubric: str | None = None,
     backend: str | None = None,
 ) -> Verdict:
-    """Score `new_output` vs `original_output`. Deterministic pre-check first;
-    on a difference, a single LLM judge call. Raises JudgeError on failure."""
+    """Score `new_output` vs `original_output`. Two free deterministic checks first
+    (equality, then shape guard); on neither firing, a single LLM judge call.
+    Raises JudgeError on failure."""
     pre = deterministic_check(original_output, new_output)
     if pre is not None:
         return pre
+
+    guard = shape_break_check(original_output, new_output)
+    if guard is not None:
+        return guard
 
     provider, model = parse_backend(backend)
     system = (rubric or DEFAULT_RUBRIC).strip()

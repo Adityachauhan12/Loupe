@@ -30,8 +30,68 @@ def test_deterministic_ignores_key_order():
 
 
 def test_deterministic_different_escalates():
-    # Different content → None → caller must run the LLM judge.
+    # Different content → None → caller must run the shape guard / LLM judge.
     assert J.deterministic_check({"genre": "Sci-Fi"}, {"genre": "Comedy"}) is None
+
+
+# ── deterministic shape guard ──────────────────────────────────────────────
+
+def test_shape_guard_json_to_prose_regresses():
+    # The live-demo case: LLM span envelope {"content": <text>}; original text is
+    # JSON, new text is prose → forced 'regressed', no LLM.
+    v = J.shape_break_check(
+        {"content": '{"genre": "Sci-Fi"}'},
+        {"content": "Sounds like you're after a mind-bending sci-fi flick!"},
+    )
+    assert v is not None
+    assert v.label == "regressed"
+    assert v.score_source == "shape_guard"
+    assert v.confidence == 1.0
+
+
+def test_shape_guard_dropped_key_regresses():
+    v = J.shape_break_check({"genre": "Sci-Fi", "year": 1982}, {"genre": "Sci-Fi"})
+    assert v is not None
+    assert v.label == "regressed"
+
+
+def test_shape_guard_added_key_escalates():
+    # Same shape preserved + an extra key → still valid JSON → let the LLM decide.
+    assert J.shape_break_check(
+        {"content": '{"genre": "Sci-Fi"}'},
+        {"content": '{"genre": "Sci-Fi", "subgenre": "Cyberpunk"}'},
+    ) is None
+
+
+def test_shape_guard_value_change_escalates():
+    # Both parse, same keys, different value → not a shape break → escalate.
+    assert J.shape_break_check({"genre": "Sci-Fi"}, {"genre": "Comedy"}) is None
+
+
+def test_shape_guard_object_to_array_regresses():
+    # dict → list: key access on the original shape breaks → forced 'regressed'.
+    v = J.shape_break_check({"content": '{"genre": "Sci-Fi"}'}, {"content": '["Sci-Fi"]'})
+    assert v is not None and v.label == "regressed"
+
+
+def test_shape_guard_list_to_list_escalates():
+    # Same container type (array → array) → not a type break → escalate.
+    assert J.shape_break_check({"content": "[1, 2]"}, {"content": "[1, 2, 3]"}) is None
+
+
+def test_shape_guard_fenced_json_regresses_by_design():
+    # Bare JSON → markdown-fenced JSON. Intentionally 'regressed': a downstream
+    # json.loads(raw) on a ```json fence breaks. Strict-is-safer for a CI gate.
+    v = J.shape_break_check(
+        {"content": '{"genre": "Sci-Fi"}'},
+        {"content": '```json\n{"genre": "Sci-Fi"}\n```'},
+    )
+    assert v is not None and v.label == "regressed"
+
+
+def test_shape_guard_unstructured_original_escalates():
+    # Original was already prose → nothing structured to protect → None.
+    assert J.shape_break_check({"content": "just some prose"}, {"content": "other prose"}) is None
 
 
 # ── backend parsing ────────────────────────────────────────────────────────
@@ -100,13 +160,30 @@ async def test_judge_deterministic_makes_no_llm_call():
 
 
 @pytest.mark.asyncio
+async def test_judge_shape_guard_makes_no_llm_call():
+    # Structured original → prose new: the shape guard must catch it for free,
+    # never reaching the LLM (this is the mis-grading the guard exists to prevent).
+    with patch.object(J, "_call_groq_json", new=AsyncMock()) as mock_call:
+        v = await J.judge(
+            original_input={"q": "sci-fi movie"},
+            original_output={"content": '{"genre": "Sci-Fi"}'},
+            new_output={"content": "Oh, you want something mind-bending and sci-fi!"},
+        )
+    mock_call.assert_not_awaited()
+    assert v.label == "regressed"
+    assert v.score_source == "shape_guard"
+
+
+@pytest.mark.asyncio
 async def test_judge_llm_path_regressed():
-    canned = '{"label": "regressed", "reasoning": "Lost the genre field.", "confidence": 0.88}'
+    # Same JSON shape (guard doesn't fire), but a semantic regression only the LLM
+    # can judge — so the provider IS called.
+    canned = '{"label": "regressed", "reasoning": "Wrong genre for the query.", "confidence": 0.88}'
     with patch.object(J, "_call_groq_json", new=AsyncMock(return_value=canned)) as mock_call:
         v = await J.judge(
             original_input={"q": "sci-fi movie"},
-            original_output={"genre": "Sci-Fi"},
-            new_output="Sounds like sci-fi!",
+            original_output={"content": '{"genre": "Sci-Fi"}'},
+            new_output={"content": '{"genre": "Comedy"}'},
             backend="groq/llama-3.3-70b-versatile",
         )
     mock_call.assert_awaited_once()
