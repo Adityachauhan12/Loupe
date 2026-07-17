@@ -1,0 +1,24 @@
+# Prompt CI — regression-tests a prompt change against a Loupe golden suite on any PR
+# that touches genre.txt. Requires repo secrets LOUPE_HOST + LOUPE_API_KEY and the
+# repo variable LOUPE_SUITE_ID. See examples/prompt-ci-demo/README.md for the demo.
+
+name: Prompt CI
+on:
+  pull_request:
+    paths:
+      - "examples/prompt-ci-demo/prompts/genre.txt"
+
+jobs:
+  loupe:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write     # needed for the PR comment
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Adityachauhan12/loupe/loupe-action@main
+        with:
+          suite-id: ${{ vars.LOUPE_SUITE_ID }}
+          prompt-file: examples/prompt-ci-demo/prompts/genre.txt
+          loupe-host: ${{ secrets.LOUPE_HOST }}
+          api-key: ${{ secrets.LOUPE_API_KEY }}
+          # backend: claude/claude-sonnet-4-6   # optional; default = free Groq/Llama
