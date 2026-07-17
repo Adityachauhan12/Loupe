@@ -126,6 +126,36 @@ def test_suite_diff_shows_counts_and_changes(monkeypatch, capsys):
     assert "equivalent → regressed" in out
 
 
+def test_host_and_key_strip_trailing_newline(monkeypatch, tmp_path):
+    # Regression: a CI secret pasted with a trailing newline must not corrupt the
+    # request URL (httpx.InvalidURL) or the X-API-Key header. Observed live in CI.
+    prompt = tmp_path / "p.txt"
+    prompt.write_text("new prompt")
+    calls: list[dict] = []
+    routes = {
+        ("POST", "/run"): {"suite_run_id": "r"},
+        ("GET", "/v1/suite_runs/"): {
+            "status": "done", "total": 1, "passed": 1, "improved": 0,
+            "regressed": 0, "errored": 0, "results": [],
+        },
+    }
+    captured: list[dict] = []
+
+    def _request(method, url, **kwargs):
+        captured.append({"url": url, "headers": kwargs.get("headers")})
+        return _router(routes, calls)(method, url, **kwargs)
+
+    monkeypatch.setattr(cli.httpx, "request", _request)
+    monkeypatch.setenv("LOUPE_HOST", "https://loupe-server.onrender.com\n")
+    monkeypatch.setenv("LOUPE_API_KEY", "lp_secret\n")
+
+    with pytest.raises(SystemExit):
+        cli.main(["suite", "run", "sid", "--prompt", str(prompt)])
+
+    assert all("\n" not in c["url"] for c in captured)
+    assert all(c["headers"]["X-API-Key"] == "lp_secret" for c in captured)
+
+
 def test_suite_missing_api_key(monkeypatch):
     monkeypatch.delenv("LOUPE_API_KEY", raising=False)
     monkeypatch.setattr(cli.httpx, "request", _router({("GET", "/v1/traces"): {}}, []))

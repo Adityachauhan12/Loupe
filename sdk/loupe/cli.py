@@ -95,14 +95,18 @@ def _cmd_replay(args: argparse.Namespace) -> None:
 
 def _host(args: argparse.Namespace) -> str:
     host = args.host or os.environ.get("LOUPE_HOST", "http://localhost:8000")
-    return host.rstrip("/")
+    # .strip() first: CI secrets pasted via a UI often carry a trailing newline,
+    # which would otherwise land inside the request URL (httpx.InvalidURL).
+    return host.strip().rstrip("/")
 
 
 def _headers(args: argparse.Namespace) -> dict[str, str]:
     key = args.api_key or os.environ.get("LOUPE_API_KEY")
-    if not key:
+    if not key or not key.strip():
         raise SystemExit("No API key. Pass --api-key or set LOUPE_API_KEY.")
-    return {"X-API-Key": key}
+    # Strip for the same reason as the host — a trailing newline in the secret
+    # would corrupt the X-API-Key header and fail auth.
+    return {"X-API-Key": key.strip()}
 
 
 def _api(args: argparse.Namespace, method: str, path: str, body: Any = None) -> Any:
