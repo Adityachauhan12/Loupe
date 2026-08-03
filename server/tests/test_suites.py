@@ -222,6 +222,84 @@ async def test_get_suite_run_not_found(client):
     assert resp.status_code == 404
 
 
+# ── run history: GET /v1/suites/{id}/runs ──────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_list_suite_runs_newest_first(client):
+    t1 = await _create_trace(client)
+    suite_id = (
+        await client.post("/v1/suites", json={"name": "s", "trace_ids": [t1]})
+    ).json()["suite_id"]
+
+    with patch("app.routers.suites._run_suite", new=AsyncMock()):
+        first = (
+            await client.post(f"/v1/suites/{suite_id}/run", json={"prompt_override": "a"})
+        ).json()["suite_run_id"]
+        second = (
+            await client.post(f"/v1/suites/{suite_id}/run", json={"prompt_override": "b"})
+        ).json()["suite_run_id"]
+
+    resp = await client.get(f"/v1/suites/{suite_id}/runs")
+    assert resp.status_code == 200
+    runs = resp.json()
+    assert [r["id"] for r in runs] == [second, first]
+    assert all(r["suite_id"] == suite_id for r in runs)
+
+
+@pytest.mark.asyncio
+async def test_list_suite_runs_omits_heavy_fields(client):
+    # The summary must not carry `results` or `prompt_override` — a suite with many
+    # runs would otherwise return megabytes just to render a table of counts.
+    t1 = await _create_trace(client)
+    suite_id = (
+        await client.post("/v1/suites", json={"name": "s", "trace_ids": [t1]})
+    ).json()["suite_id"]
+    with patch("app.routers.suites._run_suite", new=AsyncMock()):
+        await client.post(f"/v1/suites/{suite_id}/run", json={"prompt_override": "big"})
+
+    run = (await client.get(f"/v1/suites/{suite_id}/runs")).json()[0]
+    assert "results" not in run
+    assert "prompt_override" not in run
+    # ...but the counts the table renders are all there.
+    for field in ("status", "total", "passed", "regressed", "improved", "errored"):
+        assert field in run
+
+
+@pytest.mark.asyncio
+async def test_list_suite_runs_empty_for_new_suite(client):
+    suite_id = (await client.post("/v1/suites", json={"name": "s"})).json()["suite_id"]
+    resp = await client.get(f"/v1/suites/{suite_id}/runs")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+@pytest.mark.asyncio
+async def test_list_suite_runs_respects_limit(client):
+    suite_id = (await client.post("/v1/suites", json={"name": "s"})).json()["suite_id"]
+    with patch("app.routers.suites._run_suite", new=AsyncMock()):
+        for _ in range(3):
+            await client.post(f"/v1/suites/{suite_id}/run", json={})
+
+    assert len((await client.get(f"/v1/suites/{suite_id}/runs?limit=2")).json()) == 2
+    # Out-of-range limits are rejected, not silently clamped.
+    assert (await client.get(f"/v1/suites/{suite_id}/runs?limit=0")).status_code == 422
+    assert (await client.get(f"/v1/suites/{suite_id}/runs?limit=101")).status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_list_suite_runs_unknown_suite_404(client):
+    # 404, not an empty list — an empty list would hide a wrong/foreign suite id.
+    resp = await client.get(f"/v1/suites/{uuid.uuid4()}/runs")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_list_suite_runs_requires_auth(unauthed_client):
+    resp = await unauthed_client.get(f"/v1/suites/{uuid.uuid4()}/runs")
+    assert resp.status_code == 401
+
+
 @pytest.mark.asyncio
 async def test_suites_require_auth(unauthed_client):
     resp = await unauthed_client.get("/v1/suites")

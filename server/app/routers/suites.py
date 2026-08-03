@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -33,6 +33,7 @@ from app.schemas import (
     SuiteRunCreated,
     SuiteRunIn,
     SuiteRunOut,
+    SuiteRunSummary,
 )
 from app.services import judge as judge_service
 
@@ -357,6 +358,42 @@ async def run_suite(
         project_id=api_key.project_id,
     )
     return SuiteRunCreated(suite_run_id=suite_run_id)
+
+
+@router.get("/{suite_id}/runs", response_model=list[SuiteRunSummary])
+async def list_suite_runs(
+    suite_id: uuid.UUID,
+    limit: int = Query(20, ge=1, le=100),
+    api_key: ApiKey = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db),
+) -> list[SuiteRun]:
+    """Run history for one suite, newest first.
+
+    Returns summaries, not full runs — see SuiteRunSummary for why. Fetch a single
+    run via GET /v1/suite_runs/{id} when you need the per-trace verdicts.
+    """
+    # 404 on an unknown/foreign suite rather than returning [] — an empty list
+    # would read as "this suite has no runs" and hide a wrong id.
+    suite = (
+        await db.execute(
+            select(Suite.id).where(
+                Suite.id == suite_id, Suite.project_id == api_key.project_id
+            )
+        )
+    ).scalar_one_or_none()
+    if suite is None:
+        raise HTTPException(status_code=404, detail="Suite not found")
+
+    return list(
+        (
+            await db.execute(
+                select(SuiteRun)
+                .where(SuiteRun.suite_id == suite_id)
+                .order_by(SuiteRun.created_at.desc())
+                .limit(limit)
+            )
+        ).scalars().all()
+    )
 
 
 # ── suite run polling ──────────────────────────────────────────────────────

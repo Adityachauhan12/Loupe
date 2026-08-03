@@ -195,6 +195,31 @@ class SuiteRunCreated(BaseModel):
     suite_run_id: uuid.UUID
 
 
+class SuiteRunSummary(BaseModel):
+    """A suite run without its payload — for listing run history.
+
+    Deliberately omits `results` (one JSONB row per trace, B8.2) and
+    `prompt_override` (a whole prompt file). A suite with 50 runs of 100 traces
+    would otherwise return megabytes to render a table of counts.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    suite_id: uuid.UUID
+    status: str
+    model_override: str | None
+    judge_backend: str | None
+    total: int
+    passed: int
+    regressed: int
+    improved: int
+    errored: int
+    started_at: datetime
+    ended_at: datetime | None
+    created_at: datetime
+
+
 class SuiteRunOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
