@@ -39,8 +39,11 @@ runs:
 
     - name: Install Loupe SDK
       shell: bash
-      # Needs a loupe-sdk version that includes the `suite` CLI (v2.2+).
-      run: pip install --quiet "loupe-sdk>=0.3.0"
+      # 0.3.1 is the floor: it strips whitespace/newlines from LOUPE_HOST and
+      # LOUPE_API_KEY. Secrets pasted into the GitHub UI often carry a trailing
+      # newline, which crashed the run with httpx.InvalidURL on 0.3.0.
+      # Capped below 0.4 so a future breaking release can't silently break CI.
+      run: pip install --quiet "loupe-sdk>=0.3.1,<0.4"
 
     - name: Run suite
       id: run
