@@ -7,11 +7,12 @@ import {
   ChevronLeft,
   ChevronRight,
   Inbox,
+  FolderGit2,
   type LucideIcon,
 } from "lucide-react";
 import { getTraces, TraceListItem } from "@/lib/api";
 import { TopBar } from "@/components/TopBar";
-import { StatusBadge, BranchBadge, ReplayBadge } from "@/components/badges";
+import { StatusBadge, ReplayBadge } from "@/components/badges";
 import { Reveal, MotionRow } from "@/components/motion";
 import { Button } from "@/components/ui/button";
 import { formatDate, formatDuration, formatTokens, formatCost } from "@/lib/format";
@@ -49,6 +50,14 @@ export default async function TracesPage({
       <TopBar
         right={
           <nav className="flex items-center gap-1">
+            <Link
+              href="/suites"
+              className="mr-1 inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-muted transition-colors hover:bg-surface-2/60 hover:text-fg"
+            >
+              <FolderGit2 className="size-3.5" />
+              <span className="hidden sm:inline">Suites</span>
+            </Link>
+            <span className="mr-1 h-4 w-px bg-line" aria-hidden />
             {STATUS_FILTERS.map((f) => {
               const active = (f.value ?? "") === (status ?? "");
               const Icon = f.icon;

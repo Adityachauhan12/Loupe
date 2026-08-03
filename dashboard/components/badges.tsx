@@ -9,6 +9,9 @@ import {
   Database,
   GitBranch,
   Repeat,
+  Equal,
+  TrendingUp,
+  TrendingDown,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -120,6 +123,59 @@ export function ReplayBadge({ className }: { className?: string }) {
     >
       <Repeat className="size-3.5" />
       replay
+    </span>
+  );
+}
+
+// ── Judge verdict (v2.2 suites) ─────────────────────────────────────────────
+
+const VERDICT: Record<string, { icon: LucideIcon; cls: string; title: string }> = {
+  equivalent: {
+    icon: Equal,
+    cls: "bg-success/12 text-success border-success/25",
+    title: "The new prompt produced an equivalent output — no regression.",
+  },
+  improved: {
+    icon: TrendingUp,
+    cls: "bg-accent/12 text-accent border-accent/25",
+    title: "The judge rated the new output better than the original.",
+  },
+  regressed: {
+    icon: TrendingDown,
+    cls: "bg-error/12 text-error border-error/25",
+    title: "The new output is worse than the original — this blocks the PR.",
+  },
+  errored: {
+    icon: XCircle,
+    cls: "bg-surface-2 text-muted border-line",
+    title: "This trace failed to replay, so it could not be judged.",
+  },
+};
+
+export function VerdictBadge({
+  verdict,
+  className,
+}: {
+  verdict: string;
+  className?: string;
+}) {
+  const v = VERDICT[verdict] ?? {
+    icon: CircleHelp,
+    cls: "bg-surface-2 text-muted border-line",
+    title: verdict,
+  };
+  const Icon = v.icon;
+  return (
+    <span
+      title={v.title}
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs font-medium",
+        v.cls,
+        className,
+      )}
+    >
+      <Icon className="size-3.5" />
+      {verdict}
     </span>
   );
 }

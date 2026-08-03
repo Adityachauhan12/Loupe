@@ -113,3 +113,81 @@ export async function getReplay(id: string): Promise<ReplayDetail> {
   if (!res.ok) throw new Error(`GET /v1/replays/${id} failed: ${res.status}`);
   return res.json() as Promise<ReplayDetail>;
 }
+
+// ── Suites (v2.2 Prompt CI/CD) ─────────────────────────────────────────────
+
+export interface SuiteListItem {
+  id: string;
+  name: string;
+  judge_rubric: string | null;
+  trace_count: number;
+  created_at: string;
+}
+
+/** A run without its payload — what GET /v1/suites/{id}/runs returns. */
+export interface SuiteRunSummary {
+  id: string;
+  suite_id: string;
+  status: string;
+  model_override: string | null;
+  judge_backend: string | null;
+  total: number;
+  passed: number;
+  regressed: number;
+  improved: number;
+  errored: number;
+  started_at: string;
+  ended_at: string | null;
+  created_at: string;
+}
+
+/** One trace's verdict inside a run. `error` and the verdict fields are
+ *  mutually exclusive — a trace that threw has no verdict to report. */
+export interface SuiteRunResult {
+  trace_id: string;
+  new_trace_id?: string;
+  verdict?: "equivalent" | "improved" | "regressed";
+  score_source?: string;
+  reasoning?: string;
+  confidence?: number;
+  error?: string;
+}
+
+export interface SuiteRunDetail extends SuiteRunSummary {
+  prompt_override: string | null;
+  results: SuiteRunResult[] | null;
+  error: Record<string, unknown> | null;
+}
+
+export async function getSuites(): Promise<SuiteListItem[]> {
+  const res = await fetch(`${API_BASE}/v1/suites`, { headers, cache: "no-store" });
+  if (!res.ok) throw new Error(`GET /v1/suites failed: ${res.status}`);
+  return res.json() as Promise<SuiteListItem[]>;
+}
+
+export async function getSuite(id: string): Promise<SuiteListItem> {
+  const res = await fetch(`${API_BASE}/v1/suites/${id}`, { headers, cache: "no-store" });
+  if (!res.ok) throw new Error(`GET /v1/suites/${id} failed: ${res.status}`);
+  return res.json() as Promise<SuiteListItem>;
+}
+
+export async function getSuiteRuns(
+  suiteId: string,
+  limit = 20,
+): Promise<SuiteRunSummary[]> {
+  const res = await fetch(`${API_BASE}/v1/suites/${suiteId}/runs?limit=${limit}`, {
+    headers,
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`GET /v1/suites/${suiteId}/runs failed: ${res.status}`);
+  return res.json() as Promise<SuiteRunSummary[]>;
+}
+
+export async function getSuiteRun(id: string): Promise<SuiteRunDetail> {
+  const res = await fetch(`${API_BASE}/v1/suite_runs/${id}`, {
+    headers,
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`GET /v1/suite_runs/${id} failed: ${res.status}`);
+  return res.json() as Promise<SuiteRunDetail>;
+}
