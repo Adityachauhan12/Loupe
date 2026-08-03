@@ -6,6 +6,7 @@ regression exit code), and diff.
 """
 from __future__ import annotations
 
+import argparse
 import json
 from typing import Any
 
@@ -154,6 +155,40 @@ def test_host_and_key_strip_trailing_newline(monkeypatch, tmp_path):
 
     assert all("\n" not in c["url"] for c in captured)
     assert all(c["headers"]["X-API-Key"] == "lp_secret" for c in captured)
+
+
+@pytest.mark.parametrize(
+    "env_var, broken",
+    [
+        ("LOUPE_API_KEY", "lp_bro\u2028ken"),
+        ("LOUPE_HOST", "https://lou\u2028pe.example.com"),
+    ],
+)
+def test_embedded_invisible_char_fails_with_a_readable_error(monkeypatch, env_var, broken):
+    # U+2028 (LINE SEPARATOR) is what a browser inserts where a copied token
+    # wraps. Without this guard it escapes as a UnicodeEncodeError from deep
+    # inside the HTTP stack -- a traceback naming neither the value nor the cause.
+    # Written as an escape on purpose: a literal U+2028 here would be invisible
+    # to the next reader, which is the very bug under test.
+    monkeypatch.setenv("LOUPE_API_KEY", "lp_secret")
+    monkeypatch.setenv("LOUPE_HOST", "https://loupe.example.com")
+    monkeypatch.setenv(env_var, broken)
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["suite", "create", "--name", "g", "--from", "last:1"])
+
+    message = str(exc.value)
+    assert env_var in message
+    assert "U+2028" in message
+    # The value itself must never be echoed -- it may be a credential.
+    assert "lp_bro" not in message
+
+
+def test_surrounding_whitespace_is_stripped_not_rejected(monkeypatch):
+    # The common, unambiguous case stays silent — only embedded junk errors.
+    args = argparse.Namespace(host=" https://loupe.example.com/ \n", api_key="  lp_key\n")
+    assert cli._host(args) == "https://loupe.example.com"
+    assert cli._headers(args) == {"X-API-Key": "lp_key"}
 
 
 def test_suite_missing_api_key(monkeypatch):

@@ -93,20 +93,41 @@ def _cmd_replay(args: argparse.Namespace) -> None:
 # Thin HTTP wrappers over the server's /v1/suites and /v1/suite_runs endpoints.
 
 
+def _clean(value: str, label: str) -> str:
+    """Strip surrounding whitespace, reject embedded invisible characters.
+
+    Hosts and API keys are ASCII by spec, and header values get latin-1 encoded
+    on the way out. So a stray U+2028 (browsers insert one where a copied token
+    wraps) surfaces as a UnicodeEncodeError from deep inside the HTTP stack, or
+    as an unexplained 403 — neither of which points at the real cause.
+
+    Surrounding whitespace is stripped silently: a trailing newline on a secret
+    pasted into a CI UI is common and unambiguous. An *embedded* odd character
+    is not repairable — deleting it would silently send a different credential —
+    so fail loudly instead, naming the character without echoing the value.
+    """
+    cleaned = value.strip()
+    for i, ch in enumerate(cleaned):
+        if not (32 <= ord(ch) < 127):
+            raise SystemExit(
+                f"{label} contains a non-printable character (U+{ord(ch):04X}) "
+                f"at position {i}. This usually means it was copied from a "
+                "browser and picked up an invisible line break. Re-copy the "
+                "value and try again."
+            )
+    return cleaned
+
+
 def _host(args: argparse.Namespace) -> str:
     host = args.host or os.environ.get("LOUPE_HOST", "http://localhost:8000")
-    # .strip() first: CI secrets pasted via a UI often carry a trailing newline,
-    # which would otherwise land inside the request URL (httpx.InvalidURL).
-    return host.strip().rstrip("/")
+    return _clean(host, "LOUPE_HOST").rstrip("/")
 
 
 def _headers(args: argparse.Namespace) -> dict[str, str]:
     key = args.api_key or os.environ.get("LOUPE_API_KEY")
     if not key or not key.strip():
         raise SystemExit("No API key. Pass --api-key or set LOUPE_API_KEY.")
-    # Strip for the same reason as the host — a trailing newline in the secret
-    # would corrupt the X-API-Key header and fail auth.
-    return {"X-API-Key": key.strip()}
+    return {"X-API-Key": _clean(key, "LOUPE_API_KEY")}
 
 
 def _api(args: argparse.Namespace, method: str, path: str, body: Any = None) -> Any:
