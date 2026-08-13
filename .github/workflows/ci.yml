@@ -22,7 +22,9 @@ jobs:
           cache-dependency-path: sdk/pyproject.toml
 
       - name: Install SDK + dev deps
-        run: pip install -e "sdk/[dev]" ruff
+        # ruff is pinned: an unpinned linter turns main red on a new release with
+        # no code change. Upgrade deliberately, in its own commit.
+        run: pip install -e "sdk/[dev]" ruff==0.15.16
 
       - name: Lint (ruff)
         run: ruff check sdk/loupe/
@@ -60,7 +62,8 @@ jobs:
           cache-dependency-path: server/requirements.txt
 
       - name: Install deps + test tooling
-        run: pip install -r server/requirements.txt ruff pytest pytest-asyncio pytest-timeout
+        # ruff pinned — see the SDK job for why.
+        run: pip install -r server/requirements.txt ruff==0.15.16 pytest pytest-asyncio pytest-timeout
 
       - name: Lint (ruff)
         run: ruff check server/app/
