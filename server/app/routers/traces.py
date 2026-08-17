@@ -22,6 +22,7 @@ from app.schemas import (
     TraceList,
     TraceListItem,
 )
+from app.services.redact import scrub_row
 
 logger = structlog.get_logger()
 
@@ -55,6 +56,11 @@ async def ingest_trace(
         "replay_mode": payload.replay_mode,
     }
 
+    # B11/L-013: strip credential-shaped strings before anything is persisted. Done
+    # at the boundary rather than only in the SDK so that every client is covered —
+    # including the versions already installed in the wild, which we cannot upgrade.
+    scrub_row(trace_values)
+
     # Idempotent: re-delivery of the same trace id is a no-op.
     trace_stmt = (
         insert(Trace).values(**trace_values).on_conflict_do_nothing(index_elements=["id"])
@@ -85,6 +91,10 @@ async def ingest_trace(
             }
             for s in payload.spans
         ]
+        # Spans carry payloads too — the L-013 key was in span errors as well as the
+        # trace's, so scrubbing only the trace would have left copies behind.
+        for row in span_rows:
+            scrub_row(row)
         span_stmt = insert(Span).values(span_rows).on_conflict_do_nothing(
             index_elements=["id"]
         )

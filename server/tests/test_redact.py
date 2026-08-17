@@ -1,8 +1,21 @@
 """Tests for credential redaction (B11 / L-013).
 
 Every key below is synthetic — pattern-shaped, never a real credential.
+
+The second half asserts against what actually landed in Postgres, read back in a
+fresh session. A 201 response proves nothing about what was persisted, and "what
+was persisted" is the entire point of this feature.
 """
-from app.services.redact import scrub_json, scrub_text
+from __future__ import annotations
+
+import uuid
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker
+
+from app.models import Span, Trace
+from app.services.redact import REDACTION_MARKER, scrub_json, scrub_text
+from tests.conftest import make_engine, make_span_payload, make_trace_payload
 
 # Shaped like the real thing, deliberately not one.
 FAKE_GROQ = "gsk_" + "A1b2C3d4E5f6G7h8I9j0" * 2
@@ -168,3 +181,108 @@ def test_repeated_secret_reports_pattern_once() -> None:
     assert FAKE_GROQ not in scrubbed
     assert hits == ["groq_key"]
     assert scrubbed.count("[REDACTED:groq_key]") == 2
+
+
+# ── ingest: what actually reaches Postgres ──────────────────────────────────
+async def _stored(trace_id: str) -> tuple[Trace, list[Span]]:
+    """Read the persisted rows back in a fresh session."""
+    engine = make_engine()
+    async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+        trace = (
+            await session.execute(select(Trace).where(Trace.id == uuid.UUID(trace_id)))
+        ).scalar_one()
+        spans = list(
+            (
+                await session.execute(
+                    select(Span).where(Span.trace_id == uuid.UUID(trace_id))
+                )
+            ).scalars().all()
+        )
+    await engine.dispose()
+    return trace, spans
+
+
+async def test_ingest_scrubs_the_l013_incident_end_to_end(client):
+    """The real shape: httpx raises with the Authorization header in the message."""
+    payload = make_trace_payload(
+        status="error",
+        error={
+            "type": "LocalProtocolError",
+            "message": f"Illegal header value b'Bearer {FAKE_GROQ}\\n'",
+        },
+    )
+    assert (await client.post("/v1/traces", json=payload)).status_code == 201
+
+    trace, _ = await _stored(payload["id"])
+    assert FAKE_GROQ not in str(trace.error)
+    assert "[REDACTED:groq_key]" in trace.error["message"]
+    assert trace.error["type"] == "LocalProtocolError"
+    assert trace.extra_metadata[REDACTION_MARKER] == ["error.message"]
+
+
+async def test_ingest_scrubs_span_payloads(client):
+    """The leaked key lived in span errors too — scrubbing only the trace is not enough."""
+    span = make_span_payload("groq.chat", "llm")
+    span["error"] = {"message": f"Bearer {FAKE_GROQ}"}
+    span["input"] = {"headers": {"Authorization": f"Bearer {FAKE_OPENAI}"}}
+    payload = make_trace_payload(spans=[span])
+
+    assert (await client.post("/v1/traces", json=payload)).status_code == 201
+
+    _, spans = await _stored(payload["id"])
+    stored = spans[0]
+    assert FAKE_GROQ not in str(stored.error)
+    assert FAKE_OPENAI not in str(stored.input)
+    assert sorted(stored.extra_metadata[REDACTION_MARKER]) == [
+        "error.message",
+        "input.headers.Authorization",
+    ]
+
+
+async def test_ingest_scrubs_trace_input_output_and_metadata(client):
+    payload = make_trace_payload(
+        input={"token": FAKE_GROQ},
+        output={"echo": FAKE_OPENAI},
+        metadata={"env": "prod", "auth": FAKE_ANTHROPIC},
+    )
+    assert (await client.post("/v1/traces", json=payload)).status_code == 201
+
+    trace, _ = await _stored(payload["id"])
+    blob = f"{trace.input}{trace.output}{trace.extra_metadata}"
+    for secret in (FAKE_GROQ, FAKE_OPENAI, FAKE_ANTHROPIC):
+        assert secret not in blob
+    assert sorted(trace.extra_metadata[REDACTION_MARKER]) == [
+        "input.token",
+        "metadata.auth",
+        "output.echo",
+    ]
+    # the user's own metadata survives alongside the marker
+    assert trace.extra_metadata["env"] == "prod"
+
+
+async def test_clean_payload_gets_no_marker(client):
+    """Redaction must be invisible when there is nothing to redact."""
+    payload = make_trace_payload(spans=[make_span_payload()])
+    assert (await client.post("/v1/traces", json=payload)).status_code == 201
+
+    trace, spans = await _stored(payload["id"])
+    assert trace.extra_metadata is None
+    assert spans[0].extra_metadata is None
+    # and the payload is byte-for-byte what was sent
+    assert trace.input == {"query": "test input"}
+    assert trace.output == {"result": "test output"}
+
+
+async def test_redacted_trace_is_readable_over_the_api(client):
+    """A scrubbed trace still renders — fail open means the trace survives."""
+    payload = make_trace_payload(
+        status="error", error={"message": f"Bearer {FAKE_GROQ}"}
+    )
+    await client.post("/v1/traces", json=payload)
+
+    resp = await client.get(f"/v1/traces/{payload['id']}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert FAKE_GROQ not in resp.text
+    assert body["status"] == "error"
+    assert body["metadata"][REDACTION_MARKER] == ["error.message"]

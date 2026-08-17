@@ -29,6 +29,14 @@ from typing import Any
 
 PLACEHOLDER = "[REDACTED:{name}]"
 
+#: Written into a row's metadata listing the paths that were scrubbed, so the user
+#: can see their own leak instead of us silently cleaning up after them. Reserved
+#: namespace — a user key of the same name is overwritten.
+REDACTION_MARKER = "_loupe_redacted"
+
+#: JSONB payload columns carried by both traces and spans.
+_PAYLOAD_FIELDS = ("input", "output", "error")
+
 # Ordered: the first pattern to match a span of text wins, so more specific shapes
 # must precede the general ones. `sk-ant-` before `sk-` (Anthropic keys are valid
 # OpenAI-shaped strings); every provider prefix before the bare `Bearer <token>`
@@ -102,3 +110,35 @@ def scrub_json(value: Any, _path: str = "") -> tuple[Any, list[str]]:
         return items, paths
 
     return value, []
+
+
+def scrub_row(row: dict[str, Any], *, metadata_key: str = "extra_metadata") -> dict[str, Any]:
+    """Scrub the JSONB payload columns of one trace or span row, in place.
+
+    Covers `input`, `output`, `error` and the metadata column itself — a secret is
+    just as leaked from a tool argument as from an exception message, and the L-013
+    key in fact appeared in span errors as well as the trace's. When anything was
+    scrubbed, the paths are recorded under `REDACTION_MARKER` in the row's metadata.
+
+    The marker is added *after* scrubbing, so it is never itself rewritten. Returns
+    the same dict for convenience.
+    """
+    paths: list[str] = []
+
+    for field in _PAYLOAD_FIELDS:
+        value = row.get(field)
+        if value is not None:
+            row[field], found = scrub_json(value, field)
+            paths.extend(found)
+
+    metadata = row.get(metadata_key)
+    if metadata is not None:
+        metadata, found = scrub_json(metadata, "metadata")
+        paths.extend(found)
+        row[metadata_key] = metadata
+
+    if paths:
+        # Schemas type metadata as `dict | None`, so this merge is always safe.
+        row[metadata_key] = {**(row.get(metadata_key) or {}), REDACTION_MARKER: paths}
+
+    return row
