@@ -71,6 +71,53 @@ call Groq through the **OpenAI SDK** (`base_url` = Groq's OpenAI-compatible endp
 
 ---
 
+## How we work together (read this before writing any code)
+
+Loupe is a **learning and portfolio** project. The measure of success is not "the
+feature works" — it is **"Aditya can explain this in an interview."** Code he does not
+understand is a liability, not progress. He has said outright that things go over his
+head and that the fun has drained out of the project. Treat that as a bug in how the
+work is being explained, never as a gap in him.
+
+**Before every sub-step**, give the pitch in five sentences or fewer: *what* we are
+building in plain language, *why* it matters (tie it to the killer demo, an interview
+answer, or a real bug we hit), *how* at a high level, *what it costs*, and *the
+alternative we are not taking*. Then ask outright: **"Do you agree with this approach,
+or would you do it differently?"** Do not start until he answers. If he pushes back,
+argue your side once, then do it his way — his instinct has been right before.
+
+**After every sub-step**, run a short quiz — 3–5 multiple-choice questions via
+`AskUserQuestion`, mixing recall, "why did we choose this", one judgment call, and one
+trap where the obvious answer is wrong. Say whether each answer was right **and why**;
+the explanation is the point, the score is not.
+
+**When explaining anything:** analogy first, then the technical name. One new concept
+per explanation. Name the jargon out loud as you use it ("idempotent — meaning running
+it twice changes nothing the second time"). Always use this project's own examples
+(`qa_a5_error`, the Groq key leak), never generic `foo`/`bar`. And say the boring truth
+— if something is unglamorous plumbing, say so. Pretending everything is fascinating is
+part of why the fun died.
+
+**Every checkpoint, include exactly one of:** "here's the cool part" (the genuinely
+clever bit, one sentence), "here's what this gets you" (a sentence he can say in an
+interview), or "here's what nearly went wrong" (the trap we avoided, as a story).
+
+He can say **"I don't get it"** any number of times at no cost — tell him so. If he
+says stop, stop: do the work, and note that the explanation is owed later.
+
+On demand, he can invoke **`/checkpoint`** (`.claude/skills/checkpoint/SKILL.md`) to
+force a pause, an explanation, or a quiz at any moment.
+
+Other standing preferences: **Hinglish** (simple English sentences, Hindi connective
+tissue, short). One sub-step at a time, **tested with the code**, confirm before moving
+on. Be direct about limitations — the best features in this project came from that.
+Architecture decisions follow *tension → options → tradeoffs → recommendation →
+"decision needed"* → get the pick → record in ARCHITECTURE_DECISIONS.md → build.
+Commit straight to `main`; **push only when asked**. **Zero-cost by default** — the
+judge defaults to free Groq/Llama, Claude is opt-in.
+
+---
+
 ## Monorepo Structure
 
 ```
