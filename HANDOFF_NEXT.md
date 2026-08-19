@@ -61,7 +61,7 @@ recommendation → "decision needed"* → get the pick → record in ARCHITECTUR
 
 - Branch `main`, **in sync with origin** (everything pushed, CI green on `1182047`).
 - SDK: repo says **0.3.2**, PyPI serves **0.3.1**. 0.3.2 is unreleased.
-- Tests green: **server 127** (106 + 21 redaction), **SDK 45**, ruff clean,
+- Tests green: **server 127** (106 + 21 redaction), **SDK 56**, ruff clean,
   dashboard lint + build clean.
 
 ### Uncommitted working tree
@@ -138,6 +138,7 @@ sheets, 202 cases). `L-*` = found by Claude, `U-*` = found by Aditya.
 
 | ID | What | How |
 |----|------|-----|
+| **L-001** | 🔴 `@loupe.trace` (and `@loupe.span`) silently broken for `async` | `1d4db2e` |
 | L-011 | CI lint tool unpinned | `0407166` |
 | L-013 | 🔴 Live API key leaked on the public dashboard | revoked + code + prod backfill |
 | U-003 | `/suites` 404 in production | pushed `3e27508` |
@@ -146,7 +147,6 @@ sheets, 202 cases). `L-*` = found by Claude, `U-*` = found by Aditya.
 
 | ID | Sev | Summary |
 |----|-----|---------|
-| **L-001** | 🔴 Critical | **`@loupe.trace` silently broken for `async` functions.** `sdk/loupe/core.py:85` only special-cases generators; `async def` hits the sync wrapper → output = coroutine repr, duration 0ms, **spans lost**, and **a raised exception is recorded as `status=success`**. Also hits async generators. **Live on PyPI in 0.3.1.** |
 | **U-001** | 🟠 High | **No home/landing page** — the app opens straight onto the traces dashboard. Also the #1 perf fix: Render's free tier sleeps ~15 min, so a backend-free static landing page makes first paint instant at ₹0 instead of paying for a non-sleeping tier. Measured: backend warm 0.4–1.1s, Vercel `/` warm 1.25–1.55s. |
 | **U-005** | 🟠 High | Deployed traces list page 1 is a wall of near-identical `genre_extract (suite replay)` rows. The interesting traces are buried on later pages. |
 | L-002 | 🟠 High | NUL byte (`\x00`) → 500. Being 5xx, the SDK retries 3× (~3s) then drops. Should be 400 + SDK-side sanitize. |
@@ -161,6 +161,7 @@ sheets, 202 cases). `L-*` = found by Claude, `U-*` = found by Aditya.
 | U-004 | 🟡 Low | `/suites` leads with "✗ 0/15 passed", which reads as *broken tool* rather than *caught 15 regressions*. The `/suite_runs/[id]` page already has the right framing — "this run would block the PR" — lift it up to the list. |
 | L-008 | 🔵 Info | The "free" `deterministic_check` almost never fires. `shape_guard` *does* fire and works. |
 | L-010 | 🔵 Info | Published 0.3.1 lacks the U+2028 hardening; fold into the L-001 release. |
+| L-014 | 🔵 Info | `@loupe.span` **decorator** does not support async *generator* tools — the replay freeze/edit path has no sensible meaning for a stream. Documented in the docstring; the context manager works. Deliberate, not a defect. |
 
 ### Verified working ✅
 Generator traces capture mid-stream spans · nested span trees · errors with traceback ·
@@ -230,9 +231,9 @@ Server tests: `DATABASE_URL=…/loupe_test SECRET_KEY=x ENVIRONMENT=test SENTRY_
 
 ## 9. Backlog, in order
 
-1. **L-001** — add `iscoroutinefunction` + `isasyncgenfunction` branches mirroring
-   `gen_wrapper` in `sdk/loupe/core.py`, with tests for output/duration/span-capture/
-   error on each. **Critical and live on PyPI.**
+1. ~~**L-001**~~ — **DONE** (`1d4db2e`). All four function kinds branch at decoration
+   time; `@span` fixed too. 11 tests, 5/5 mutations caught. **Still live-broken on PyPI
+   0.3.1 until 0.3.2 ships — that is now the urgent part.**
 2. **SDK-side redaction** — same patterns, applied before the payload leaves the user's
    machine (server-side already covers everyone; this stops the secret ever travelling).
 3. **Publish 0.3.2** carrying L-001 + SDK redaction + the U+2028 hardening as one
