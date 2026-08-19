@@ -82,13 +82,54 @@ def _emit_trace(
     _client.enqueue(payload)  # type: ignore[union-attr]
 
 
+def _open_decorator_span(
+    ctx: _TraceContext,
+    span_name: str,
+    span_type: str,
+    span_metadata: dict[str, Any] | None,
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+) -> tuple[SpanPayload, uuid.UUID | None]:
+    """Build a span for the @span decorator and make it the current parent.
+
+    Returns the span and the parent it displaced, which the caller must hand
+    back to _close_decorator_span.
+    """
+    parent_id = ctx.current_span_id
+    s = SpanPayload(
+        id=uuid.uuid4(),
+        parent_span_id=parent_id,
+        type=span_type,
+        name=span_name,
+        input=_safe_serialize(args, kwargs),
+        metadata=span_metadata,
+        started_at=datetime.now(timezone.utc),
+    )
+    ctx.current_span_id = s.id
+    return s, parent_id
+
+
+def _close_decorator_span(
+    ctx: _TraceContext, s: SpanPayload, parent_id: uuid.UUID | None
+) -> None:
+    """Finalise a decorator span: restore the parent, time it, record it."""
+    _replay.end_span()
+    ctx.current_span_id = parent_id
+    s.ended_at = datetime.now(timezone.utc)
+    s.duration_ms = int((s.ended_at - s.started_at).total_seconds() * 1000)
+    ctx.spans.append(s)
+
+
 def trace(_fn: F | None = None, *, name: str | None = None) -> Any:
     """
     Decorator that records a function call as a Loupe trace.
 
-    Works with plain functions and with generator functions (e.g. an SSE
-    streaming agent) — for a generator the trace stays open until the
-    generator is exhausted, so spans created while streaming are captured.
+    Works with all four function kinds: plain, generator, ``async def``, and
+    async generator. For the two lazy kinds (generators) the trace stays open
+    until the generator is exhausted, and for the two awaitable kinds the
+    wrapper awaits the call itself — either way the trace is still open while
+    the real work runs, so spans created inside it are captured and a raised
+    exception is recorded as an error.
 
     Usage:
         @loupe.trace
@@ -99,6 +140,87 @@ def trace(_fn: F | None = None, *, name: str | None = None) -> Any:
     """
     def decorator(fn: F) -> F:
         trace_name = name or fn.__name__
+
+        if inspect.isasyncgenfunction(fn):
+
+            @functools.wraps(fn)
+            async def async_gen_wrapper(*args: Any, **kwargs: Any) -> Any:
+                if _client is None:
+                    async for item in fn(*args, **kwargs):
+                        yield item
+                    return
+
+                started_at = datetime.now(timezone.utc)
+                ctx = _TraceContext(trace_id=uuid.uuid4())
+                token = _current_trace.set(ctx)
+
+                rplan = _replay.get_plan()
+                if rplan is not None:
+                    rplan.new_trace_id = ctx.trace_id
+
+                collected: list[Any] = []
+                error_info: dict[str, Any] | None = None
+                status = "success"
+
+                try:
+                    async for item in fn(*args, **kwargs):
+                        collected.append(item)
+                        yield item
+                except Exception as exc:
+                    status = "error"
+                    error_info = {
+                        "type": type(exc).__name__,
+                        "message": str(exc),
+                        "traceback": traceback.format_exc(),
+                    }
+                    raise
+                finally:
+                    _current_trace.reset(token)
+                    _emit_trace(
+                        trace_name, ctx, rplan, started_at,
+                        status, error_info, args, kwargs, collected,
+                    )
+
+            return async_gen_wrapper  # type: ignore[return-value]
+
+        if inspect.iscoroutinefunction(fn):
+
+            @functools.wraps(fn)
+            async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+                if _client is None:
+                    return await fn(*args, **kwargs)
+
+                started_at = datetime.now(timezone.utc)
+                ctx = _TraceContext(trace_id=uuid.uuid4())
+                token = _current_trace.set(ctx)
+
+                rplan = _replay.get_plan()
+                if rplan is not None:
+                    rplan.new_trace_id = ctx.trace_id
+
+                result = None
+                error_info: dict[str, Any] | None = None
+                status = "success"
+
+                try:
+                    result = await fn(*args, **kwargs)
+                    return result
+                except Exception as exc:
+                    status = "error"
+                    error_info = {
+                        "type": type(exc).__name__,
+                        "message": str(exc),
+                        "traceback": traceback.format_exc(),
+                    }
+                    raise
+                finally:
+                    _current_trace.reset(token)
+                    _emit_trace(
+                        trace_name, ctx, rplan, started_at,
+                        status, error_info, args, kwargs, result,
+                    )
+
+            return async_wrapper  # type: ignore[return-value]
 
         if inspect.isgeneratorfunction(fn):
 
@@ -220,27 +342,43 @@ class _SpanHandle:
         span_type = self._type
         span_metadata = self._metadata
 
+        if inspect.iscoroutinefunction(fn):
+
+            @functools.wraps(fn)
+            async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+                ctx = _current_trace.get()
+                if ctx is None or _client is None:
+                    return await fn(*args, **kwargs)
+
+                s, parent_id = _open_decorator_span(
+                    ctx, span_name, span_type, span_metadata, args, kwargs
+                )
+                mode, frozen = _replay.begin_span()
+                try:
+                    if mode in (_replay.FREEZE, _replay.EDIT):
+                        s.output = frozen
+                        s.metadata = _mark_replay(s.metadata, mode)
+                        return _reconstruct_return(frozen)
+                    result = await fn(*args, **kwargs)
+                    s.output = _safe_serialize(result)
+                    return result
+                except Exception as exc:
+                    s.error = {"type": exc.__class__.__name__, "message": str(exc)}
+                    raise
+                finally:
+                    _close_decorator_span(ctx, s, parent_id)
+
+            return async_wrapper  # type: ignore[return-value]
+
         @functools.wraps(fn)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             ctx = _current_trace.get()
             if ctx is None or _client is None:
                 return fn(*args, **kwargs)
 
-            span_id = uuid.uuid4()
-            parent_id = ctx.current_span_id
-            started_at = datetime.now(timezone.utc)
-
-            s = SpanPayload(
-                id=span_id,
-                parent_span_id=parent_id,
-                type=span_type,
-                name=span_name,
-                input=_safe_serialize(args, kwargs),
-                metadata=span_metadata,
-                started_at=started_at,
+            s, parent_id = _open_decorator_span(
+                ctx, span_name, span_type, span_metadata, args, kwargs
             )
-            ctx.current_span_id = span_id
-
             mode, frozen = _replay.begin_span()
             try:
                 if mode in (_replay.FREEZE, _replay.EDIT):
@@ -256,11 +394,7 @@ class _SpanHandle:
                 s.error = {"type": exc.__class__.__name__, "message": str(exc)}
                 raise
             finally:
-                _replay.end_span()
-                ctx.current_span_id = parent_id
-                s.ended_at = datetime.now(timezone.utc)
-                s.duration_ms = int((s.ended_at - started_at).total_seconds() * 1000)
-                ctx.spans.append(s)
+                _close_decorator_span(ctx, s, parent_id)
 
         return wrapper  # type: ignore[return-value]
 
@@ -330,9 +464,14 @@ def span(
     """
     Records a sub-span within the current trace.
 
-    As a decorator (auto-captures args + return value):
+    As a decorator (auto-captures args + return value). Works on plain and
+    ``async def`` functions; an async *generator* tool is not supported by the
+    decorator form — wrap it with the context manager instead:
         @loupe.span(type="tool", name="search_movies")
         def search_movies(query: str) -> list: ...
+
+        @loupe.span(type="tool", name="search_movies")
+        async def search_movies(query: str) -> list: ...
 
     As a context manager (set output manually):
         with loupe.span("search_movies", type="tool") as s:

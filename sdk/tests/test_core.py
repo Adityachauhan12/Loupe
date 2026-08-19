@@ -4,6 +4,8 @@ a decorator (auto-capture) and a context manager (manual).
 """
 from __future__ import annotations
 
+import asyncio
+import inspect
 import uuid
 
 import pytest
@@ -293,3 +295,208 @@ def test_trace_on_generator_is_lazy_and_noop_without_init(monkeypatch):
 
     # Without init, it still works as a plain generator.
     assert list(stream()) == ["a", "b"]
+
+
+# ── @trace on async functions (L-001) ───────────────────────────────────────
+#
+# The sync wrapper never ran an `async def` body — it captured the *coroutine*
+# and closed the trace immediately. That produced four separate lies: a
+# coroutine repr as the output, duration 0ms, zero spans (the trace context was
+# already torn down by the time the body ran), and — worst — a raised exception
+# recorded as status="success". Each assert below pins one of those down.
+
+async def test_trace_on_async_captures_real_output_duration_and_spans(monkeypatch):
+    captured = _capture_traces(monkeypatch)
+
+    @loupe.trace(name="async_agent")
+    async def run():
+        with loupe.span("mid", type="tool") as s:
+            s.output = {"ok": True}
+        await asyncio.sleep(0.02)
+        return {"answer": "Interstellar"}
+
+    result = await run()
+
+    assert result == {"answer": "Interstellar"}
+    payload = captured[0]
+    assert payload.name == "async_agent"
+    assert payload.status == "success"
+    # The real return value, not "<coroutine object run at 0x...>".
+    assert payload.output == {"answer": "Interstellar"}
+    # The trace stayed open across the await, so the span landed under it.
+    assert [s.name for s in payload.spans] == ["mid"]
+    # And the clock covers the awaited work instead of stopping at 0.
+    assert payload.duration_ms >= 20
+
+
+async def test_trace_on_async_records_error(monkeypatch):
+    captured = _capture_traces(monkeypatch)
+
+    @loupe.trace(name="async_boom")
+    async def boom():
+        await asyncio.sleep(0)
+        raise ValueError("kaboom")
+
+    with pytest.raises(ValueError):
+        await boom()
+
+    payload = captured[0]
+    assert payload.status == "error"
+    assert payload.error["type"] == "ValueError"
+
+
+async def test_trace_on_async_is_noop_without_init(monkeypatch):
+    import loupe.core as core
+
+    monkeypatch.setattr(core, "_client", None)
+
+    @loupe.trace
+    async def run():
+        return "ok"
+
+    assert await run() == "ok"
+
+
+async def test_trace_on_async_generator_keeps_trace_open_for_spans(monkeypatch):
+    captured = _capture_traces(monkeypatch)
+
+    @loupe.trace(name="async_streamer")
+    async def stream():
+        with loupe.span("mid", type="tool") as s:
+            s.output = {"ok": True}
+        for i in range(3):
+            await asyncio.sleep(0)
+            yield i
+
+    result = [item async for item in stream()]
+
+    assert result == [0, 1, 2]
+    payload = captured[0]
+    assert payload.status == "success"
+    assert [s.name for s in payload.spans] == ["mid"]
+    assert payload.output is not None
+
+
+async def test_trace_on_async_generator_records_error(monkeypatch):
+    captured = _capture_traces(monkeypatch)
+
+    @loupe.trace(name="async_boom_stream")
+    async def stream():
+        yield 1
+        raise ValueError("kaboom")
+
+    with pytest.raises(ValueError):
+        _ = [item async for item in stream()]
+
+    payload = captured[0]
+    assert payload.status == "error"
+    assert payload.error["type"] == "ValueError"
+
+
+async def test_trace_on_async_generator_is_noop_without_init(monkeypatch):
+    import loupe.core as core
+
+    monkeypatch.setattr(core, "_client", None)
+
+    @loupe.trace
+    async def stream():
+        yield "a"
+        yield "b"
+
+    assert [item async for item in stream()] == ["a", "b"]
+
+
+def test_trace_preserves_the_function_kind_it_wrapped():
+    """The decorator must not lie about what it wrapped.
+
+    functools.wraps copies __name__ but NOT the coroutine flag, and FastAPI
+    calls iscoroutinefunction() on every route to decide whether to await it
+    or hand it to a threadpool. Hiding async-ness there returns a coroutine as
+    the response body — a 500. This is the regression guard for that.
+    """
+
+    @loupe.trace
+    async def coro():
+        return 1
+
+    @loupe.trace
+    async def agen():
+        yield 1
+
+    @loupe.trace
+    def gen():
+        yield 1
+
+    @loupe.trace
+    def plain():
+        return 1
+
+    assert inspect.iscoroutinefunction(coro)
+    assert inspect.isasyncgenfunction(agen)
+    assert inspect.isgeneratorfunction(gen)
+    assert not inspect.iscoroutinefunction(plain)
+    assert not inspect.isgeneratorfunction(plain)
+
+
+# ── @span decorator on async functions (same bug, same fix) ─────────────────
+
+async def test_span_decorator_on_async_captures_output_and_duration(monkeypatch):
+    captured = _capture_traces(monkeypatch)
+
+    @loupe.span(type="tool", name="search_movies")
+    async def search_movies(query: str) -> dict:
+        await asyncio.sleep(0.02)
+        return {"count": 3}
+
+    @loupe.trace(name="agent")
+    async def run():
+        return await search_movies("nolan")
+
+    await run()
+
+    span = captured[0].spans[0]
+    assert span.name == "search_movies"
+    assert span.output == {"count": 3}
+    assert span.duration_ms >= 20
+    assert span.error is None
+
+
+async def test_span_decorator_on_async_records_error(monkeypatch):
+    captured = _capture_traces(monkeypatch)
+
+    @loupe.span(type="tool", name="bad_tool")
+    async def bad_tool():
+        await asyncio.sleep(0)
+        raise RuntimeError("tool down")
+
+    @loupe.trace(name="agent")
+    async def run():
+        await bad_tool()
+
+    with pytest.raises(RuntimeError):
+        await run()
+
+    span = captured[0].spans[0]
+    assert span.error["type"] == "RuntimeError"
+    assert span.name == "bad_tool"
+
+
+async def test_span_decorator_on_async_is_noop_outside_a_trace():
+    @loupe.span(type="tool")
+    async def orphan():
+        return "ok"
+
+    assert await orphan() == "ok"
+
+
+def test_span_decorator_preserves_async_identity():
+    @loupe.span(type="tool")
+    async def coro():
+        return 1
+
+    @loupe.span(type="tool")
+    def plain():
+        return 1
+
+    assert inspect.iscoroutinefunction(coro)
+    assert not inspect.iscoroutinefunction(plain)
