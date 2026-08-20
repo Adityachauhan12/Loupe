@@ -59,21 +59,22 @@ recommendation → "decision needed"* → get the pick → record in ARCHITECTUR
 
 ## 3. State of the repo
 
-- Branch `main`, **in sync with origin** (everything pushed, CI green on `1182047`).
-- SDK: repo says **0.3.2**, PyPI serves **0.3.1**. 0.3.2 is unreleased.
+- Branch `main`, **4 commits ahead of origin — nothing pushed yet** (`1d4db2e`, `30ef5fd`,
+  `c755fc1`, plus this one) and the **`v0.3.2` tag is local too**. Push when asked:
+  `git push origin main --follow-tags`.
+- SDK: **0.3.2 published to PyPI 2026-08-20** and verified by installing from PyPI into a
+  clean venv. Repo and PyPI now agree.
 - Tests green: **server 127** (106 + 21 redaction), **SDK 56**, ruff clean,
   dashboard lint + build clean.
 
 ### Uncommitted working tree
 
 ```
- M claude.md              ← the new "How we work together" section
-?? .claude/               ← the new /checkpoint skill
 ?? Screenshot …png x2     ← stray, in repo root, not gitignored
 ```
 
-**claude.md and `.claude/` should be committed.** The two screenshots are junk — delete
-or gitignore them.
+claude.md and `.claude/` were committed in `3f9227a`. The two screenshots are junk —
+delete or gitignore them.
 
 ---
 
@@ -138,7 +139,8 @@ sheets, 202 cases). `L-*` = found by Claude, `U-*` = found by Aditya.
 
 | ID | What | How |
 |----|------|-----|
-| **L-001** | 🔴 `@loupe.trace` (and `@loupe.span`) silently broken for `async` | `1d4db2e` |
+| **L-001** | 🔴 `@loupe.trace` (and `@loupe.span`) silently broken for `async` | `1d4db2e`, shipped in 0.3.2 |
+| L-010 | 0.3.1 lacked the U+2028 CLI hardening | shipped in 0.3.2 |
 | L-011 | CI lint tool unpinned | `0407166` |
 | L-013 | 🔴 Live API key leaked on the public dashboard | revoked + code + prod backfill |
 | U-003 | `/suites` 404 in production | pushed `3e27508` |
@@ -160,7 +162,6 @@ sheets, 202 cases). `L-*` = found by Claude, `U-*` = found by Aditya.
 | L-012 | 🟡 Low | ruff 0.16.x upgrade + clear the 48 findings (25 are B008 on FastAPI's `Depends()` idiom — needs a per-file ignore). Deliberately deferred. |
 | U-004 | 🟡 Low | `/suites` leads with "✗ 0/15 passed", which reads as *broken tool* rather than *caught 15 regressions*. The `/suite_runs/[id]` page already has the right framing — "this run would block the PR" — lift it up to the list. |
 | L-008 | 🔵 Info | The "free" `deterministic_check` almost never fires. `shape_guard` *does* fire and works. |
-| L-010 | 🔵 Info | Published 0.3.1 lacks the U+2028 hardening; fold into the L-001 release. |
 | L-014 | 🔵 Info | `@loupe.span` **decorator** does not support async *generator* tools — the replay freeze/edit path has no sensible meaning for a stream. Documented in the docstring; the context manager works. Deliberate, not a defect. |
 
 ### Verified working ✅
@@ -231,22 +232,22 @@ Server tests: `DATABASE_URL=…/loupe_test SECRET_KEY=x ENVIRONMENT=test SENTRY_
 
 ## 9. Backlog, in order
 
-1. ~~**L-001**~~ — **DONE** (`1d4db2e`). All four function kinds branch at decoration
-   time; `@span` fixed too. 11 tests, 5/5 mutations caught. **Still live-broken on PyPI
-   0.3.1 until 0.3.2 ships — that is now the urgent part.**
+1. ~~**L-001**~~ + ~~**publish 0.3.2**~~ — **DONE 2026-08-20.** All four function kinds
+   branch at decoration time; `@span` fixed too. 11 tests, 5/5 mutations caught,
+   `sdk/CHANGELOG.md` added, `v0.3.2` tagged. Verified by installing **from PyPI** into a
+   clean venv, not just from the local wheel.
 2. **SDK-side redaction** — same patterns, applied before the payload leaves the user's
-   machine (server-side already covers everyone; this stops the secret ever travelling).
-3. **Publish 0.3.2** carrying L-001 + SDK redaction + the U+2028 hardening as one
-   release. `rm -rf dist && python3.11 -m build`, verify the *artifact* not the source,
-   then the user runs twine (their token — paste-into-prompt corrupts tokens).
-4. **U-001 landing page** — biggest demo win, and it fixes the cold-start first paint
+   machine. Deliberately **not** bundled into 0.3.2: the server already scrubs every
+   trace regardless of SDK version, so this is defense-in-depth, not urgent. Ship as
+   0.3.3.
+3. **U-001 landing page** — biggest demo win, and it fixes the cold-start first paint
    for ₹0.
-5. **L-002 + L-003** — both are "internal error leaks as 500"; fix together.
-6. **L-004…L-007** — validation + empty-suite guard.
-7. **Dashboard badge** for `_loupe_redacted`; **README** best-effort redaction caveat.
-8. **Docs** — `claude.md`'s v2.2 checklist still says ⬜ NOT STARTED for shipped work;
+4. **L-002 + L-003** — both are "internal error leaks as 500"; fix together.
+5. **L-004…L-007** — validation + empty-suite guard.
+6. **Dashboard badge** for `_loupe_redacted`; **README** best-effort redaction caveat.
+7. **Docs** — `claude.md`'s v2.2 checklist still says ⬜ NOT STARTED for shipped work;
    add ADR **B12** (the `/runs` endpoint) and **B11** (redaction, now built).
-9. **Track D** — killer-demo recording; real README screenshots.
+8. **Track D** — killer-demo recording; real README screenshots.
 
 ---
 
