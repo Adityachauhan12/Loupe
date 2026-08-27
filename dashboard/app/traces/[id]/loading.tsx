@@ -4,7 +4,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 export default function Loading() {
   return (
     <div className="min-h-dvh">
-      <TopBar back={{ label: "Traces", href: "/" }} />
+      <TopBar back={{ label: "Traces", href: "/traces" }} />
       <main className="mx-auto w-full max-w-6xl space-y-6 px-5 py-7">
         <div>
           <Skeleton className="h-6 w-64" />

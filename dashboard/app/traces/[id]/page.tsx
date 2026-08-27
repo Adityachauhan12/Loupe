@@ -42,7 +42,7 @@ export default async function TraceDetailPage({
   return (
     <div className="min-h-dvh">
       <TopBar
-        back={{ label: "Traces", href: "/" }}
+        back={{ label: "Traces", href: "/traces" }}
         crumbs={[{ label: trace.name ?? trace.id.slice(0, 12) }]}
         right={
           <>

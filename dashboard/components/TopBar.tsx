@@ -2,11 +2,13 @@ import Link from "next/link";
 import { ArrowLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-/** Loupe wordmark with a lens/aperture glyph. */
-export function Logo({ className }: { className?: string }) {
+/** Loupe wordmark with a lens/aperture glyph.
+ *  Defaults to the traces list — inside the app that is "home". The landing
+ *  page passes href="/" for itself. */
+export function Logo({ className, href = "/traces" }: { className?: string; href?: string }) {
   return (
     <Link
-      href="/"
+      href={href}
       className={cn(
         "group inline-flex items-center gap-2 font-semibold tracking-tight text-fg",
         className,

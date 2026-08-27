@@ -35,7 +35,7 @@ export default async function SuitesPage() {
 
   return (
     <div className="min-h-dvh">
-      <TopBar back={{ label: "Traces", href: "/" }} />
+      <TopBar back={{ label: "Traces", href: "/traces" }} />
 
       <main className="mx-auto w-full max-w-6xl px-5 py-7">
         <Reveal className="mb-6">
