@@ -226,6 +226,76 @@ async def test_list_traces_status_filter(client):
 
 
 
+async def test_list_traces_is_replay_filter_false_hides_replays(client):
+    await client.post("/v1/traces", json=make_trace_payload(name="cinebot"))
+    await client.post(
+        "/v1/traces", json=make_trace_payload(name="cinebot (suite replay)", is_replay=True)
+    )
+
+    resp = await client.get("/v1/traces?is_replay=false")
+    items = resp.json()["items"]
+    assert len(items) == 1
+    assert items[0]["name"] == "cinebot"
+
+
+async def test_list_traces_is_replay_filter_true_shows_only_replays(client):
+    await client.post("/v1/traces", json=make_trace_payload(name="cinebot"))
+    await client.post(
+        "/v1/traces", json=make_trace_payload(name="cinebot (suite replay)", is_replay=True)
+    )
+
+    resp = await client.get("/v1/traces?is_replay=true")
+    items = resp.json()["items"]
+    assert len(items) == 1
+    assert items[0]["is_replay"] is True
+
+
+async def test_list_traces_without_is_replay_returns_both(client):
+    """Omitting the param must not change behaviour for existing callers."""
+    await client.post("/v1/traces", json=make_trace_payload(name="cinebot"))
+    await client.post(
+        "/v1/traces", json=make_trace_payload(name="cinebot (suite replay)", is_replay=True)
+    )
+
+    resp = await client.get("/v1/traces")
+    assert len(resp.json()["items"]) == 2
+
+
+async def test_list_traces_is_replay_combines_with_status(client):
+    await client.post(
+        "/v1/traces", json=make_trace_payload(name="ok_orig", status="success")
+    )
+    await client.post(
+        "/v1/traces", json=make_trace_payload(name="bad_orig", status="error")
+    )
+    await client.post(
+        "/v1/traces",
+        json=make_trace_payload(name="bad_replay", status="error", is_replay=True),
+    )
+
+    resp = await client.get("/v1/traces?status=error&is_replay=false")
+    items = resp.json()["items"]
+    assert len(items) == 1
+    assert items[0]["name"] == "bad_orig"
+
+
+async def test_list_traces_is_replay_filter_applies_before_pagination(client):
+    """The filter must run in SQL, not after LIMIT — otherwise a page of replays
+    comes back short and has_more lies."""
+    for i in range(3):
+        await client.post(
+            "/v1/traces", json=make_trace_payload(name=f"replay_{i}", is_replay=True)
+        )
+    for i in range(3):
+        await client.post("/v1/traces", json=make_trace_payload(name=f"orig_{i}"))
+
+    resp = await client.get("/v1/traces?is_replay=false&limit=2")
+    body = resp.json()
+    assert len(body["items"]) == 2
+    assert all(not t["is_replay"] for t in body["items"])
+    assert body["has_more"] is True
+
+
 async def test_list_traces_pagination_has_more(client):
     for i in range(3):
         await client.post("/v1/traces", json=make_trace_payload(name=f"trace_{i}"))

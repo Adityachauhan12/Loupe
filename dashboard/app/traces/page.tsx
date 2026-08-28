@@ -8,6 +8,7 @@ import {
   ChevronRight,
   Inbox,
   FolderGit2,
+  GitBranch,
   type LucideIcon,
 } from "lucide-react";
 import { getTraces, TraceListItem } from "@/lib/api";
@@ -27,19 +28,49 @@ const STATUS_FILTERS: { label: string; value?: string; icon: LucideIcon }[] = [
   { label: "Running", value: "running", icon: Loader2 },
 ];
 
+/**
+ * Build a /traces URL carrying every active filter.
+ *
+ * Centralised on purpose: these query strings used to be hand-written at each
+ * link, and a filter that silently drops on "Next" is the kind of bug that only
+ * shows up when someone actually clicks through.
+ */
+function tracesHref(opts: {
+  status?: string;
+  offset?: number;
+  replays?: boolean;
+}): string {
+  const p = new URLSearchParams();
+  if (opts.status) p.set("status", opts.status);
+  if (opts.offset) p.set("offset", String(opts.offset));
+  if (opts.replays) p.set("replays", "1");
+  const qs = p.toString();
+  return qs ? `/traces?${qs}` : "/traces";
+}
+
 export default async function TracesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ offset?: string; status?: string }>;
+  searchParams: Promise<{ offset?: string; status?: string; replays?: string }>;
 }) {
-  const { offset: offsetStr, status } = await searchParams;
+  const { offset: offsetStr, status, replays } = await searchParams;
   const rawOffset = Number(offsetStr ?? 0);
   const offset = Number.isFinite(rawOffset) ? Math.max(0, rawOffset) : 0;
+
+  // U-005: suite replays are near-identical rows that buried the real runs on
+  // page 1. Hide them by default; the toggle brings them back. Filtering happens
+  // server-side so LIMIT still counts the rows we actually show.
+  const showReplays = replays === "1";
 
   let data;
   let failed = false;
   try {
-    data = await getTraces({ limit: LIMIT, offset, status });
+    data = await getTraces({
+      limit: LIMIT,
+      offset,
+      status,
+      isReplay: showReplays ? undefined : false,
+    });
   } catch (err) {
     console.error("[loupe] Failed to fetch traces:", err);
     failed = true;
@@ -57,6 +88,21 @@ export default async function TracesPage({
               <FolderGit2 className="size-3.5" />
               <span className="hidden sm:inline">Suites</span>
             </Link>
+            <Link
+              href={tracesHref({ status, replays: !showReplays })}
+              aria-pressed={showReplays}
+              className={cn(
+                "mr-1 inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors",
+                showReplays
+                  ? "bg-surface-2 text-fg"
+                  : "text-muted hover:bg-surface-2/60 hover:text-fg",
+              )}
+            >
+              <GitBranch className="size-3.5" />
+              <span className="hidden sm:inline">
+                {showReplays ? "Hide replays" : "Show replays"}
+              </span>
+            </Link>
             <span className="mr-1 h-4 w-px bg-line" aria-hidden />
             {STATUS_FILTERS.map((f) => {
               const active = (f.value ?? "") === (status ?? "");
@@ -64,7 +110,7 @@ export default async function TracesPage({
               return (
                 <Link
                   key={f.label}
-                  href={f.value ? `/traces?status=${f.value}` : "/traces"}
+                  href={tracesHref({ status: f.value, replays: showReplays })}
                   className={cn(
                     "inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors",
                     active
@@ -92,7 +138,7 @@ export default async function TracesPage({
         {failed ? (
           <ErrorState />
         ) : data!.items.length === 0 ? (
-          <EmptyState status={status} />
+          <EmptyState status={status} showReplays={showReplays} />
         ) : (
           <>
             {/* Desktop table */}
@@ -128,6 +174,7 @@ export default async function TracesPage({
               limit={LIMIT}
               hasMore={data!.has_more}
               status={status}
+              showReplays={showReplays}
             />
           </>
         )}
@@ -206,7 +253,13 @@ function LineageTag({ trace: t }: { trace: TraceListItem }) {
 
 // ── States ───────────────────────────────────────────────────────────────────
 
-function EmptyState({ status }: { status?: string }) {
+function EmptyState({
+  status,
+  showReplays,
+}: {
+  status?: string;
+  showReplays: boolean;
+}) {
   return (
     <Reveal className="flex flex-col items-center justify-center rounded-xl border border-dashed border-line bg-surface/40 py-20 text-center">
       <div className="grid size-12 place-items-center rounded-full bg-surface-2 text-faint">
@@ -220,8 +273,16 @@ function EmptyState({ status }: { status?: string }) {
           ? "Try a different filter, or run your agent to generate traces."
           : "Instrument your agent with the Loupe SDK and runs will show up here."}
       </p>
+      {!showReplays && (
+        <Link href={tracesHref({ status, replays: true })} className="mt-4">
+          <Button variant="secondary" size="sm">
+            <GitBranch className="size-3.5" />
+            Include replays
+          </Button>
+        </Link>
+      )}
       {status && (
-        <Link href="/traces" className="mt-4">
+        <Link href={tracesHref({ replays: showReplays })} className="mt-4">
           <Button variant="secondary" size="sm">
             <List className="size-3.5" />
             Show all traces
@@ -257,19 +318,26 @@ function Pagination({
   limit,
   hasMore,
   status,
+  showReplays,
 }: {
   offset: number;
   limit: number;
   hasMore: boolean;
   status?: string;
+  showReplays: boolean;
 }) {
-  const statusParam = status ? `&status=${status}` : "";
   const page = Math.floor(offset / limit) + 1;
 
   return (
     <div className="mt-6 flex items-center gap-3">
       {offset > 0 ? (
-        <Link href={`/traces?offset=${offset - limit}${statusParam}`}>
+        <Link
+          href={tracesHref({
+            status,
+            offset: offset - limit,
+            replays: showReplays,
+          })}
+        >
           <Button variant="secondary" size="sm">
             <ChevronLeft className="size-4" />
             Prev
@@ -285,7 +353,13 @@ function Pagination({
       <span className="text-xs tabular-nums text-faint">Page {page}</span>
 
       {hasMore ? (
-        <Link href={`/traces?offset=${offset + limit}${statusParam}`}>
+        <Link
+          href={tracesHref({
+            status,
+            offset: offset + limit,
+            replays: showReplays,
+          })}
+        >
           <Button variant="secondary" size="sm">
             Next
             <ChevronRight className="size-4" />

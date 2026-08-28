@@ -168,12 +168,21 @@ async def list_traces(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     status_filter: str | None = Query(default=None, alias="status", max_length=16),
+    is_replay: bool | None = Query(
+        default=None,
+        description=(
+            "Filter by run kind: true = replays/branches only, false = original runs "
+            "only. Omit for both — existing callers keep their current behaviour."
+        ),
+    ),
     api_key: ApiKey = Depends(require_api_key),
     db: AsyncSession = Depends(get_db),
 ) -> TraceList:
     stmt = select(Trace).where(Trace.project_id == api_key.project_id)
     if status_filter is not None:
         stmt = stmt.where(Trace.status == status_filter)
+    if is_replay is not None:
+        stmt = stmt.where(Trace.is_replay == is_replay)
 
     # Fetch one extra row to determine has_more without a separate COUNT query.
     stmt = stmt.order_by(Trace.started_at.desc()).offset(offset).limit(limit + 1)

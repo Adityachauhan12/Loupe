@@ -29,11 +29,14 @@ export async function getTraces(params: {
   status?: string;
   limit?: number;
   offset?: number;
+  /** true = replays only, false = original runs only, omit = both. */
+  isReplay?: boolean;
 }): Promise<TraceList> {
   const url = new URL(`${API_BASE}/v1/traces`);
   if (params.status) url.searchParams.set("status", params.status);
   if (params.limit != null) url.searchParams.set("limit", String(params.limit));
   if (params.offset != null) url.searchParams.set("offset", String(params.offset));
+  if (params.isReplay != null) url.searchParams.set("is_replay", String(params.isReplay));
 
   const res = await fetch(url.toString(), { headers, cache: "no-store" });
   if (!res.ok) throw new Error(`GET /v1/traces failed: ${res.status}`);
