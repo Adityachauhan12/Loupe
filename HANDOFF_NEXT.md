@@ -1,7 +1,7 @@
 # Loupe — Session Handoff
 
-> Written **2026-08-17**. Supersedes the 2026-08-07 handoff entirely.
-> Paste this file's path into the new chat and say the message in §9.
+> Written **2026-09-01**. Supersedes the 2026-08-17 handoff entirely.
+> Paste this file's path into the new chat and say the message in §10.
 
 ---
 
@@ -15,43 +15,51 @@ Three layers, all shipped:
 - **Prompt CI/CD** (v2.2) — golden suites → replay against a new prompt → LLM judge → a
   GitHub Action that blocks PRs on regressions.
 
-Spec: [claude.md](claude.md). Decisions + rationale: [ARCHITECTURE_DECISIONS.md](ARCHITECTURE_DECISIONS.md).
+Spec: [claude.md](claude.md). Decisions: [ARCHITECTURE_DECISIONS.md](ARCHITECTURE_DECISIONS.md).
 Plain-language explainer: [docs/concepts-explained.md](docs/concepts-explained.md).
 
 ---
 
 ## 2. 🔴 READ THIS FIRST — how the user needs you to work
 
-**This changed materially this session. It is now the most important section here.**
+**This is the most important section here. It is not optional.**
 
-Aditya said, in his own words, that **things are going over his head and the fun has
-gone out of the project.** That is the single most important fact in this handoff. A
-working feature he cannot explain is worth nothing — this is a portfolio project, and
-the deliverable is *his ability to defend it in an interview*, not the code.
+Aditya said, in his own words, that **things were going over his head and the fun had
+gone out of the project.** A working feature he cannot explain is worth nothing — this
+is a portfolio project, and the deliverable is *his ability to defend it in an
+interview*, not the code.
 
-Two things now enforce this, both created 2026-08-17:
+Enforced by [claude.md](claude.md) → "How we work together" (always on) and the
+**`/checkpoint` skill** ([.claude/skills/checkpoint/SKILL.md](.claude/skills/checkpoint/SKILL.md)).
 
-- **[claude.md](claude.md) → "How we work together"** — always on, read every session.
-- **`/checkpoint` skill** ([.claude/skills/checkpoint/SKILL.md](.claude/skills/checkpoint/SKILL.md))
-  — he invokes it to force a pause, an explanation, or a quiz.
+The rules:
 
-The rules, short version:
-
-- **Before every sub-step**, pitch it in ≤5 sentences (what / why / how / cost /
-  the alternative not taken), then **ask "do you agree with this approach?"** and wait.
-- **After every sub-step**, quiz him — 3–5 multiple-choice questions via
-  `AskUserQuestion`, mixing recall, "why this choice", a judgment call, and one trap.
-  Say why each answer was right or wrong. The explanation is the point, not the score.
-- **Analogy first, then the technical name.** One new concept at a time. Name the
-  jargon out loud. Always use this project's own examples, never `foo`/`bar`.
+- **Before every sub-step**, pitch it in ≤5 sentences (what / why / how / cost / the
+  alternative not taken), then **ask "do you agree with this approach?"** and wait.
+- **After every sub-step**, quiz him — 3–4 multiple-choice questions via
+  `AskUserQuestion` (the tool caps at 4), mixing recall, "why this choice", a judgment
+  call, and one trap. Say why each answer was right or wrong. The explanation is the
+  point, not the score.
 - **Each checkpoint, include exactly one of**: "here's the cool part" / "here's what
   this gets you in an interview" / "here's what nearly went wrong".
 - He can say **"I don't get it"** any number of times at no cost. Tell him so.
 - **If he says stop, stop.** Do the work; note that the explanation is owed.
 
-Unchanged standing preferences: **Hinglish** (simple English, short sentences). One
-sub-step at a time, **tested with the code**. Be direct about limitations — the best
-features here came from that. Architecture decisions: *tension → options → tradeoffs →
+### ⚠️ Hinglish — corrected this session, get this right
+
+He pushed back with **"bhai itni hindi bhi nahi"**. Hinglish here means **simple English
+sentences with Hindi connective tissue** — `to`, `matlab`, `abhi`, `wahi`, `chalo`,
+`theek hai`. It does **NOT** mean translating technical terms into Hindi. Inventing Hindi
+words for technical concepts (*mohar* for a code flag, *parchi* for a coroutine, *jhanda*
+for a ContextVar) makes it **harder**, because he has to translate twice. Keep
+`coroutine`, `flag`, `ContextVar`, `prefetch` in English. **Also keep replies shorter** —
+long walls of text are part of the same complaint.
+
+Analogies are still good — just keep them in plain English ("it's an order slip, not the
+food"). One new concept at a time. Use this project's own examples, never `foo`/`bar`.
+
+Other standing preferences: one sub-step at a time, **tested with the code**. Be direct
+about limitations. Architecture decisions: *tension → options → tradeoffs →
 recommendation → "decision needed"* → get the pick → record in ARCHITECTURE_DECISIONS.md
 → build. Commit straight to `main`; **push only when asked**. **Zero-cost by default.**
 
@@ -59,221 +67,173 @@ recommendation → "decision needed"* → get the pick → record in ARCHITECTUR
 
 ## 3. State of the repo
 
-- Branch `main`, **4 commits ahead of origin — nothing pushed yet** (`1d4db2e`, `30ef5fd`,
-  `c755fc1`, plus this one) and the **`v0.3.2` tag is local too**. Push when asked:
-  `git push origin main --follow-tags`.
-- SDK: **0.3.2 published to PyPI 2026-08-20** and verified by installing from PyPI into a
-  clean venv. Repo and PyPI now agree.
-- Tests green: **server 127** (106 + 21 redaction), **SDK 56**, ruff clean,
-  dashboard lint + build clean.
+- Branch `main`, **in sync with origin**, pushed 2026-09-01. Tag `v0.3.2` pushed.
+- SDK: **0.3.2 live on PyPI**, verified by installing from PyPI into a clean venv.
+- Tests green: **server 132**, **SDK 56**, ruff clean, dashboard lint + build clean.
+- Deployed and verified: Vercel dashboard + Render server both carry this session's work.
 
 ### Uncommitted working tree
 
-```
-?? Screenshot …png x2     ← stray, in repo root, not gitignored
-```
-
-claude.md and `.claude/` were committed in `3f9227a`. The two screenshots are junk —
-delete or gitignore them.
+Two stray `Screenshot ….png` files in the repo root — junk, delete or gitignore.
 
 ---
 
-## 4. What shipped this session (2026-08-17)
+## 4. What shipped this session (2026-08-19 → 09-01)
 
 | Commit | What |
 |---|---|
-| `3e27508`+`6fcf84c` | **Dashboard `/suites` pages pushed and deployed** — closed the last v2.2 gap |
-| `0407166` | **CI: pinned ruff to 0.15.16.** It was unpinned; ruff 0.16.2 flagged 48 pre-existing findings and turned `main` red with no code change. CI had been failing since `9cede77`. |
-| `89f12c1` | **Redaction primitives** — `server/app/services/redact.py`, 13 credential patterns, 21 tests, mutation-checked |
-| `1182047` | **Redaction wired into `POST /v1/traces`** — scrubs input/output/error/metadata on trace *and* spans |
+| `1d4db2e` | **L-001 — `@loupe.trace` / `@loupe.span` fixed for async.** Decoration-time branch on all four function kinds. 11 tests, 5/5 mutations caught. |
+| `c755fc1` | `sdk/CHANGELOG.md` added, 0.1.0 → 0.3.2 |
+| `5918e34` | **U-001 — static landing page at `/`**, traces list moved to `/traces` |
+| `645df42` | **U-005 — `is_replay` filter**, list hides suite replays by default |
+| — | **loupe-sdk 0.3.2 published to PyPI** (2026-08-20) |
+| — | **`docs/Loupe_Test_Tracker.xlsx` updated** — Sheet 1 now has 16 issues incl. U-*, Sheet 3 has DR-01 + DR-03 |
 
-Also, not in git: **production database backfilled** — 13 rows (4 traces + 9 spans)
-scrubbed in place.
+### The measured wins
 
----
-
-## 5. 🔴 L-013 — the secret leak (found and closed this session)
-
-**What happened.** A trailing newline in CineRater's `GROQ_API_KEY` made `httpx` raise
-`LocalProtocolError` carrying the entire `Authorization` header. `@loupe.trace` captured
-that exception into `trace.error`, the SDK shipped it to the server, and the public
-Vercel dashboard rendered **a live Groq API key** — from June until 2026-08-17. Found by
-accident, reading error traces while looking for DR-04 demo material.
-
-**Closed:**
-
-1. Key **revoked** (Groq now returns 403). Both `.env` files updated.
-2. Scanned for anything else: **86 public trace pages + the whole local DB**, against 14
-   generic credential patterns and 12 real values pulled from the user's `.env` files.
-   **Only that one key ever leaked.** Git history of both repos was always clean.
-3. **Ingest-time redaction shipped** (see §4).
-4. **Production backfilled** — 13 rows scrubbed, verified 0 secrets in the DB and 0
-   across all 86 public pages. Traces survived intact; only the key was replaced.
-
-**Design decisions, for the interview answer:**
-
-- **Fail open.** Redact and store, never reject. Rejecting drops the trace — and drops
-  it precisely on the unattended production runs nobody is watching, breaking the one
-  promise an observability tool makes.
-- **Server-side first**, SDK-side later. The server boundary protects *every* SDK
-  version, including the 0.3.1 already installed in the wild, which we cannot upgrade.
-- **Walk the structure, not `json.dumps()` output.** Preserves shape, leaves dict keys
-  alone, avoids escape-sequence corruption.
-- **Best effort, not a guarantee.** A house-format token (`tok_x9f…`) still sails
-  through. The README needs to say so — it does not yet.
-
-**Still open from L-013:** dashboard badge for `_loupe_redacted`; SDK-side redaction
-(ship with L-001 in 0.3.2); the README caveat.
-
-**Cleanup owed:** `~/.loupe_prod_backup_l013.json` (mode 600) holds the pre-scrub rows,
-i.e. the dead key. Delete once satisfied. `~/.loupe_prod_db` holds the Neon DSN.
+- **Landing page:** production `/` was **47.2s** on a cold Render backend. Now **0.22s**,
+  served from Vercel's CDN (`x-vercel-cache: HIT`). The page makes **zero API calls** by
+  design — a comment in `dashboard/app/page.tsx` says not to add a live stat, because one
+  fetch turns `/` dynamic again and gives the cold start back.
+- **Replay filter:** production `/traces` went from **80 "(suite replay)" rows to 0**.
 
 ---
 
-## 6. The combined findings list — this is the live thread
+## 5. Findings — the Excel is now the source of truth
 
-From the test sweep ([docs/Loupe_Test_Tracker.xlsx](docs/Loupe_Test_Tracker.xlsx), 4
-sheets, 202 cases). `L-*` = found by Claude, `U-*` = found by Aditya.
+**[docs/Loupe_Test_Tracker.xlsx](docs/Loupe_Test_Tracker.xlsx)** — Sheet 1 "Issues Found"
+has all 16 with full fix notes. Sheet 3 has 137 manual tests, 2 filled. Keep recording
+there, not only in chat. Summary:
 
-### Closed
+**Closed:** L-001 (async, shipped 0.3.2) · L-010 (U+2028, shipped 0.3.2) · L-011 (ruff
+pin) · L-013 (🔴 the leaked Groq key — revoked, redaction shipped, prod backfilled) ·
+U-001 (landing page) · U-003 (`/suites` 404). **L-014** = documented by-design limit
+(`@loupe.span` decorator does not support async *generator* tools).
 
-| ID | What | How |
-|----|------|-----|
-| **L-001** | 🔴 `@loupe.trace` (and `@loupe.span`) silently broken for `async` | `1d4db2e`, shipped in 0.3.2 |
-| L-010 | 0.3.1 lacked the U+2028 CLI hardening | shipped in 0.3.2 |
-| L-011 | CI lint tool unpinned | `0407166` |
-| L-013 | 🔴 Live API key leaked on the public dashboard | revoked + code + prod backfill |
-| U-003 | `/suites` 404 in production | pushed `3e27508` |
-
-### Open, worst first
+**Open, worst first:**
 
 | ID | Sev | Summary |
 |----|-----|---------|
-| **U-001** | 🟠 High | **No home/landing page** — the app opens straight onto the traces dashboard. Also the #1 perf fix: Render's free tier sleeps ~15 min, so a backend-free static landing page makes first paint instant at ₹0 instead of paying for a non-sleeping tier. Measured: backend warm 0.4–1.1s, Vercel `/` warm 1.25–1.55s. |
-| **U-005** | 🟠 High | Deployed traces list page 1 is a wall of near-identical `genre_extract (suite replay)` rows. The interesting traces are buried on later pages. |
-| L-002 | 🟠 High | NUL byte (`\x00`) → 500. Being 5xx, the SDK retries 3× (~3s) then drops. Should be 400 + SDK-side sanitize. |
-| L-003 | 🟠 High | Orphan `parent_span_id` → 500 (FK violation escapes). Should be 400. |
-| U-002 | 🟡 Med | UI is plain — he wants motion / imagery / 3D. **Recommended instead:** proper landing page + an auto-playing demo GIF of the killer flow + light polish. Showing the product beats decoration. His call. |
-| L-004 | 🟡 Low | No request-size limit (1MB payload stored verbatim). |
-| L-005 | 🟡 Low | Negative `duration_ms` / `ended_at` < `started_at` accepted. |
-| L-006 | 🟡 Low | `status` is free text — `"banana"` accepted, invisible in every dashboard filter. |
-| L-007 | 🟡 Low | **Empty suite runs green** — 0/0 passed, CLI exits 0, GitHub check green having tested nothing. |
-| L-009 | 🟡 Low | Dashboard returns 200 for unknown IDs (streaming flushes headers before `notFound()`). Pre-existing, app-wide. |
-| L-012 | 🟡 Low | ruff 0.16.x upgrade + clear the 48 findings (25 are B008 on FastAPI's `Depends()` idiom — needs a per-file ignore). Deliberately deferred. |
-| U-004 | 🟡 Low | `/suites` leads with "✗ 0/15 passed", which reads as *broken tool* rather than *caught 15 regressions*. The `/suite_runs/[id]` page already has the right framing — "this run would block the PR" — lift it up to the list. |
-| L-008 | 🔵 Info | The "free" `deterministic_check` almost never fires. `shape_guard` *does* fire and works. |
-| L-014 | 🔵 Info | `@loupe.span` **decorator** does not support async *generator* tools — the replay freeze/edit path has no sensible meaning for a stream. Documented in the docstring; the context manager works. Deliberate, not a defect. |
-
-### Verified working ✅
-Generator traces capture mid-stream spans · nested span trees · errors with traceback ·
-all 3 provider integrations map tokens+cost · `provider="groq"` override · tool_calls ·
-atexit flush · **project isolation holds** (confirmed again: two same-named
-`genre-golden` suites in prod belong to different projects and the dashboard correctly
-shows only one) · idempotent re-delivery · 100-level nesting · unicode/emoji/HTML/SQL
-safe · branch lineage + `replay_mode` · live Groq judge caught JSON→prose 2/2 via free
-`shape_guard` · no secrets in logs.
+| **U-005** | 🟠 | **Partially fixed.** Replay noise gone, but page 1 is still 15× `genre_extract` + 5× `triage_repo` **originals** — and all 9 `cinerater` traces (the actual demo agent) sit on **page 2**. Needs a name filter, or reseed so the good traces are newest. **This is the next real demo blocker.** |
+| L-002 | 🟠 | NUL byte (`\x00`) → 500. SDK retries 3× then drops. Should be 400 + SDK sanitize. |
+| L-003 | 🟠 | Orphan `parent_span_id` → 500 (FK violation escapes). Should be 400. |
+| U-002 | 🟡 | UI plain. Landing page helped; a demo GIF is the remaining piece (Track D). |
+| U-004 | 🟡 | `/suites` leads with "✗ 0/15 passed", reads as *broken tool* not *caught 15 regressions*. `/suite_runs/[id]` already frames it right — lift that up. |
+| L-004…L-007 | 🟡 | request-size limit · negative duration · `status` free text · empty suite runs green |
+| L-008 | 🔵 | `deterministic_check` rarely fires; `shape_guard` does and works. |
+| L-009 | 🔵 | Unknown IDs return 200 not 404. **Re-confirmed on production 2026-09-01.** |
+| L-012 | 🟡 | ruff 0.16.x upgrade + clear 48 findings (25 are B008 on `Depends()` — needs per-file ignore). |
 
 ---
 
-## 7. Where the manual testing stands
+## 6. Testing status
 
-**Sheet 3 (137 manual/UI tests) — the file is still blank.** Findings come **verbally**;
-record them into the sheet as they arrive.
+- **DR-03** (recruiter fresh-eyes) — DONE, produced U-001/002/004/005.
+- **DR-01** (console errors) — **DONE 2026-09-01, PASS.** Automated with headless Chrome.
+  10 pages + a 6-step client-side journey (load `/` → click to `/traces` → toggle replays
+  → open a trace → Back → reload). **0 console errors, 0 uncaught exceptions, 0 4xx/5xx,
+  0 broken assets.** The only network events were 81 `net::ERR_ABORTED` on Next.js
+  `?_rsc=` prefetches, all to our own host — these also fire while the page merely idles,
+  so they are normal App Router behaviour, not a defect.
+- **Next: DR-04** (killer flow: failed trace → branch → diff), then DR-02 (polling),
+  DR-05 (screenshots).
 
-- **Done: DR-03** (fresh-eyes recruiter test) → produced U-001, U-002, U-004, U-005.
-- **Next: DR-01** (DevTools console errors on every page), then DR-04 (killer flow),
-  DR-02 (polling), DR-05 (screenshots).
-- **Decision made: test on the deployed instance only** —
-  [loupe-kappa.vercel.app](https://loupe-kappa.vercel.app).
+**The headless-browser harness is reusable** — see §9.
 
-**⚠️ Deployed-only has a real gap.** None of the five seeded traps exist in production:
-
-| Trap | Local | Prod |
-|---|---|---|
-| `probe_deep` (100 nested spans) | ✅ | max **13** |
-| `probe_large` (1MB payload) | ✅ | max **882 bytes** |
-| `status='banana'` | ✅ | only success/error |
-| `probe_empty_suite` (0 traces) | ✅ | ❌ |
-| `qa_a5_error` (agent-reasoning failure) | ✅ | 5 errors, all **auth** failures |
-
-So ~37 of the 137 tests (CLI, data-correctness edges, ISO, error states, self-host)
-cannot run on deployed. **Do not seed the traps into production** — `probe_large` and
-`probe_deep` would pollute the public demo, which already suffers from U-005. Agreed
-plan: do the ~100 UI/demo/flow tests on deployed, batch the ~37 into one local session.
+**⚠️ ~37 of the 137 tests cannot run on deployed** (CLI, data-correctness edges, error
+states, self-host): production lacks the five seeded traps (`probe_deep`, `probe_large`,
+`status='banana'`, `probe_empty_suite`, `qa_a5_error`). **Do not seed them into
+production** — they would pollute the public demo. Batch those into one local session.
 
 ---
 
-## 8. Environments
+## 7. Environments — verified working 2026-09-01
 
-**Deployed:** dashboard [loupe-kappa.vercel.app](https://loupe-kappa.vercel.app),
-server `loupe-server.onrender.com`. Render free tier sleeps ~15 min — wake with
-`curl <url>/health`.
+**Deployed:** [loupe-kappa.vercel.app](https://loupe-kappa.vercel.app) ·
+`loupe-server.onrender.com`. Render sleeps ~15 min; wake with `curl <url>/health`.
+The landing page at `/` does **not** need the backend.
 
-**Local:**
+**Local — three terminals:**
 
 ```bash
-docker compose up -d db                                   # Postgres :5433
-cd server && DATABASE_URL="postgresql+asyncpg://loupe:loupe@localhost:5433/loupe" \
-  SENTRY_DSN="" ENVIRONMENT=development \
-  python3.11 -m uvicorn app.main:app --host 127.0.0.1 --port 8010 --reload
-cd dashboard && LOUPE_API_URL="http://127.0.0.1:8010" \
-  LOUPE_API_KEY="lp_PxRgfuqfhgzivyZwsHw9YuGQmcLJzVzOR8iWrSUKskY" npm run dev -- --port 3010
+open -a Docker                                   # daemon is usually NOT running
+cd ~/Desktop/Loupe_Project && docker compose up -d db     # Postgres on :5433
+
+cd ~/Desktop/Loupe_Project/server                # server/.env auto-loads, no inline vars
+python3.11 -m uvicorn app.main:app --reload --port 8000
+
+cd ~/Desktop/Loupe_Project/dashboard             # .env.local points at :8000
+npm run dev                                      # http://localhost:3000
 ```
 
-Server tests: `DATABASE_URL=…/loupe_test SECRET_KEY=x ENVIRONMENT=test SENTRY_DSN="" python3.11 -m pytest tests/ -q`
+Server tests:
+```bash
+cd server && DATABASE_URL="postgresql+asyncpg://loupe:loupe@localhost:5433/loupe_test" \
+  SECRET_KEY=x ENVIRONMENT=test SENTRY_DSN="" python3.11 -m pytest tests/ -q
+```
 
-- **Port 8010, not 8000** — an unrelated service occupies :8000 on this machine.
-- Keys: `qa-alpha` = `lp_PxRgfuqfhgzivyZwsHw9YuGQmcLJzVzOR8iWrSUKskY` (owns all seeded
-  data); `qa-beta` = `lp_-ZgnzZ4jd4i6oGH94glmStQCph03V4mmZcPOqZNkQY0` (isolation test).
-- CineRater's `LOUPE_API_KEY` returns **401 against the deployed server** — there is
-  currently no known-valid production Loupe API key on this machine.
-
----
-
-## 9. Backlog, in order
-
-1. ~~**L-001**~~ + ~~**publish 0.3.2**~~ — **DONE 2026-08-20.** All four function kinds
-   branch at decoration time; `@span` fixed too. 11 tests, 5/5 mutations caught,
-   `sdk/CHANGELOG.md` added, `v0.3.2` tagged. Verified by installing **from PyPI** into a
-   clean venv, not just from the local wheel.
-2. **SDK-side redaction** — same patterns, applied before the payload leaves the user's
-   machine. Deliberately **not** bundled into 0.3.2: the server already scrubs every
-   trace regardless of SDK version, so this is defense-in-depth, not urgent. Ship as
-   0.3.3.
-3. **U-001 landing page** — biggest demo win, and it fixes the cold-start first paint
-   for ₹0.
-4. **L-002 + L-003** — both are "internal error leaks as 500"; fix together.
-5. **L-004…L-007** — validation + empty-suite guard.
-6. **Dashboard badge** for `_loupe_redacted`; **README** best-effort redaction caveat.
-7. **Docs** — `claude.md`'s v2.2 checklist still says ⬜ NOT STARTED for shipped work;
-   add ADR **B12** (the `/runs` endpoint) and **B11** (redaction, now built).
-8. **Track D** — killer-demo recording; real README screenshots.
+- **Port 8000, not 8010.** The old handoff said 8010 because something occupied 8000 then;
+  it is free now, and `dashboard/.env.local` expects 8000.
+- **`server/.env` already holds everything** (DATABASE_URL, Groq key). Don't pass inline
+  env vars. Pydantic reads `.env` relative to CWD, so run from `server/`.
+- Keys: `qa-alpha` = `lp_PxRgfuqfhgzivyZwsHw9YuGQmcLJzVzOR8iWrSUKskY`;
+  `qa-beta` = `lp_-ZgnzZ4jd4i6oGH94glmStQCph03V4mmZcPOqZNkQY0` (isolation test).
 
 ---
 
-## 10. Gotchas
+## 8. Backlog, in order
 
-- **Bash CWD persists** between tool calls — `cd` to repo root before `git`.
-- **Stale uvicorn serves old code** — restart before deep-diving contradictory behaviour.
+1. **U-005 part two** — get `cinerater` traces onto page 1. Options: a name/search filter,
+   or reseed so the interesting traces are newest. **Decide with him first.**
+2. **DR-04** — walk the killer flow on deployed (failed trace → branch → diff).
+3. **L-002 + L-003** — both "internal error leaks as 500"; fix together.
+4. **SDK-side redaction → 0.3.3.** Deliberately not in 0.3.2: the server already scrubs
+   every trace regardless of SDK version, so this is defense-in-depth, not urgent.
+5. **U-004** — lift the `/suite_runs` framing up to the `/suites` list.
+6. **L-004…L-007** — validation + empty-suite guard.
+7. **Dashboard badge** for `_loupe_redacted`; **README** best-effort redaction caveat.
+8. **Docs** — claude.md's v2.2 checklist still says ⬜ NOT STARTED for shipped work; add
+   ADR **B11** (redaction) and **B12** (the `/runs` endpoint).
+9. **Track D** — killer-demo recording (the landing page has a slot waiting for it, at
+   `DemoFrame` in `dashboard/app/page.tsx`); real README screenshots.
+
+---
+
+## 9. Gotchas
+
+- **`gh` CLI is NOT installed.** Check CI at github.com/Adityachauhan12/Loupe/actions.
+- **Docker daemon is usually down** — `open -a Docker` and wait before `docker compose`.
+- **The dashboard's `.env.local` key is NOT qa-alpha.** Different project, different data
+  (22 originals vs 32). This caused a false "pagination is broken" alarm this session.
+  When two numbers disagree, first ask *"did both sides ask the same question?"*
+- **Headless browser testing works** and is set up in the scratchpad:
+  `dr01/dr01b.mjs` uses `puppeteer-core` (no browser download) against the installed
+  Chrome at `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`. Reuse it for
+  DR-02/DR-04. Note: the **Claude Chrome extension does not give this session a browser
+  tool** — they are separate; drive Chrome yourself.
+- **`lucide-react` has no brand icons** (`Github` does not exist). Inline the SVG.
+- **PyPI's JSON API is CDN-cached** and lags after an upload; `/simple/<pkg>/` is
+  authoritative for what `pip` will see.
+- **Bash CWD resets between tool calls** — use absolute paths.
 - `python3.11` for everything; `alembic` isn't on PATH → `python3.11 -m alembic`.
-- Fast local DB peek: `docker exec loupe-db psql -U loupe -d loupe -c "\dt"`.
-  Note the ORM's `extra_metadata` is the column **`metadata`** in SQL.
+- Fast DB peek: `docker exec loupe-db psql -U loupe -d loupe -c "\dt"`. The ORM's
+  `extra_metadata` is the SQL column **`metadata`**.
 - **The traces list API returns `{"items": […]}`,** not `{"traces": […]}`.
-- **Reaching the production DB:** this machine's network blocks outbound **5432**, so
-  asyncpg to Neon times out. Use Neon's **SQL-over-HTTPS**: POST `https://<host>/sql`
-  with header `Neon-Connection-String`. The stored DSN uses `postgresql+asyncpg://`,
-  which that endpoint rejects with "incorrect scheme" — rewrite to `postgresql://` and
-  append `sslmode=require`. Working script: scratchpad `purge_prod.py`.
+- **Production DB access:** this machine blocks outbound 5432, so asyncpg to Neon times
+  out. Use Neon's SQL-over-HTTPS: POST `https://<host>/sql` with a `Neon-Connection-String`
+  header, rewriting the DSN to `postgresql://…?sslmode=require`.
 - **Invoke the `claude-api` skill before writing any Claude/Anthropic code.**
-- A test suite that passes on the first try deserves a **mutation check** — break the
-  code deliberately and confirm the tests scream. Both redaction mutations were caught.
+- **A suite that passes first try deserves a mutation check** — break the code
+  deliberately and confirm the tests scream. Every mutation this session was caught.
+- **"Build passed" ≠ "it works."** The build compiles types and imports; it does not
+  check that an `href` string points at a real route. Curl the routes.
 
 ---
 
-## 11. First message for the new chat
+## 10. First message for the new chat
 
-> "Read HANDOFF_NEXT.md and continue. Start with §2 — I told Claude last session that
-> this project is going over my head and stopped being fun, so we built a working
-> agreement and a /checkpoint skill. Follow it: pitch each sub-step and ask if I agree
-> before building, and quiz me after. Next up is L-001, the async trace bug. Teach as
-> you build, Hinglish, keep it zero-cost."
+> "Read HANDOFF_NEXT.md and continue. Start with §2 — especially the Hinglish note: plain
+> English sentences with Hindi connectors, technical terms stay in English, and keep
+> replies short. Follow the working agreement: pitch each sub-step and ask if I agree
+> before building, then quiz me after. Next up is U-005 part two — the traces list still
+> buries the cinerater traces on page 2. Zero-cost."
