@@ -21,6 +21,20 @@ import { cn } from "@/lib/utils";
 
 const LIMIT = 20;
 
+/**
+ * U-005: the seeded demo data is dominated by `genre_extract` (the prompt-CI
+ * suite) and `triage_repo`, which pushed all 9 `cinerater` runs — the actual
+ * demo agent — onto page 2, where nobody looks. These chips filter by exact
+ * trace name server-side. Hardcoded rather than fetched: three known agents,
+ * and a /v1/traces/names endpoint would be a whole extra round trip for it.
+ */
+const AGENT_FILTERS: { label: string; value?: string }[] = [
+  { label: "All agents", value: undefined },
+  { label: "cinerater", value: "cinerater" },
+  { label: "genre_extract", value: "genre_extract" },
+  { label: "triage_repo", value: "triage_repo" },
+];
+
 const STATUS_FILTERS: { label: string; value?: string; icon: LucideIcon }[] = [
   { label: "All", value: undefined, icon: List },
   { label: "Success", value: "success", icon: CheckCircle2 },
@@ -39,9 +53,11 @@ function tracesHref(opts: {
   status?: string;
   offset?: number;
   replays?: boolean;
+  name?: string;
 }): string {
   const p = new URLSearchParams();
   if (opts.status) p.set("status", opts.status);
+  if (opts.name) p.set("name", opts.name);
   if (opts.offset) p.set("offset", String(opts.offset));
   if (opts.replays) p.set("replays", "1");
   const qs = p.toString();
@@ -51,9 +67,14 @@ function tracesHref(opts: {
 export default async function TracesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ offset?: string; status?: string; replays?: string }>;
+  searchParams: Promise<{
+    offset?: string;
+    status?: string;
+    replays?: string;
+    name?: string;
+  }>;
 }) {
-  const { offset: offsetStr, status, replays } = await searchParams;
+  const { offset: offsetStr, status, replays, name } = await searchParams;
   const rawOffset = Number(offsetStr ?? 0);
   const offset = Number.isFinite(rawOffset) ? Math.max(0, rawOffset) : 0;
 
@@ -70,6 +91,7 @@ export default async function TracesPage({
       offset,
       status,
       isReplay: showReplays ? undefined : false,
+      name,
     });
   } catch (err) {
     console.error("[loupe] Failed to fetch traces:", err);
@@ -89,7 +111,7 @@ export default async function TracesPage({
               <span className="hidden sm:inline">Suites</span>
             </Link>
             <Link
-              href={tracesHref({ status, replays: !showReplays })}
+              href={tracesHref({ status, replays: !showReplays, name })}
               aria-pressed={showReplays}
               className={cn(
                 "mr-1 inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors",
@@ -110,7 +132,7 @@ export default async function TracesPage({
               return (
                 <Link
                   key={f.label}
-                  href={tracesHref({ status: f.value, replays: showReplays })}
+                  href={tracesHref({ status: f.value, replays: showReplays, name })}
                   className={cn(
                     "inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors",
                     active
@@ -133,12 +155,33 @@ export default async function TracesPage({
           <p className="mt-1 text-sm text-muted">
             Every end-to-end agent run. Click one to inspect spans, then replay it.
           </p>
+
+          <nav aria-label="Filter by agent" className="mt-4 flex flex-wrap gap-1.5">
+            {AGENT_FILTERS.map((f) => {
+              const active = (f.value ?? "") === (name ?? "");
+              return (
+                <Link
+                  key={f.label}
+                  href={tracesHref({ status, replays: showReplays, name: f.value })}
+                  aria-current={active ? "true" : undefined}
+                  className={cn(
+                    "inline-flex items-center rounded-full border px-3 py-1 font-mono text-xs transition-colors",
+                    active
+                      ? "border-line-strong bg-surface-2 text-fg"
+                      : "border-line text-muted hover:bg-surface-2/60 hover:text-fg",
+                  )}
+                >
+                  {f.label}
+                </Link>
+              );
+            })}
+          </nav>
         </Reveal>
 
         {failed ? (
           <ErrorState />
         ) : data!.items.length === 0 ? (
-          <EmptyState status={status} showReplays={showReplays} />
+          <EmptyState status={status} showReplays={showReplays} name={name} />
         ) : (
           <>
             {/* Desktop table */}
@@ -175,6 +218,7 @@ export default async function TracesPage({
               hasMore={data!.has_more}
               status={status}
               showReplays={showReplays}
+              name={name}
             />
           </>
         )}
@@ -256,9 +300,11 @@ function LineageTag({ trace: t }: { trace: TraceListItem }) {
 function EmptyState({
   status,
   showReplays,
+  name,
 }: {
   status?: string;
   showReplays: boolean;
+  name?: string;
 }) {
   return (
     <Reveal className="flex flex-col items-center justify-center rounded-xl border border-dashed border-line bg-surface/40 py-20 text-center">
@@ -266,22 +312,26 @@ function EmptyState({
         <Inbox className="size-6" />
       </div>
       <p className="mt-4 text-sm font-medium text-fg">
-        {status ? `No ${status} traces` : "No traces yet"}
+        {name
+          ? `No ${status ? `${status} ` : ""}traces for ${name}`
+          : status
+            ? `No ${status} traces`
+            : "No traces yet"}
       </p>
       <p className="mt-1 max-w-sm text-xs text-muted">
-        {status
+        {status || name
           ? "Try a different filter, or run your agent to generate traces."
           : "Instrument your agent with the Loupe SDK and runs will show up here."}
       </p>
       {!showReplays && (
-        <Link href={tracesHref({ status, replays: true })} className="mt-4">
+        <Link href={tracesHref({ status, replays: true, name })} className="mt-4">
           <Button variant="secondary" size="sm">
             <GitBranch className="size-3.5" />
             Include replays
           </Button>
         </Link>
       )}
-      {status && (
+      {(status || name) && (
         <Link href={tracesHref({ replays: showReplays })} className="mt-4">
           <Button variant="secondary" size="sm">
             <List className="size-3.5" />
@@ -319,12 +369,14 @@ function Pagination({
   hasMore,
   status,
   showReplays,
+  name,
 }: {
   offset: number;
   limit: number;
   hasMore: boolean;
   status?: string;
   showReplays: boolean;
+  name?: string;
 }) {
   const page = Math.floor(offset / limit) + 1;
 
@@ -336,6 +388,7 @@ function Pagination({
             status,
             offset: offset - limit,
             replays: showReplays,
+            name,
           })}
         >
           <Button variant="secondary" size="sm">
@@ -358,6 +411,7 @@ function Pagination({
             status,
             offset: offset + limit,
             replays: showReplays,
+            name,
           })}
         >
           <Button variant="secondary" size="sm">

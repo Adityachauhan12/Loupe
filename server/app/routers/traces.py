@@ -168,6 +168,15 @@ async def list_traces(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     status_filter: str | None = Query(default=None, alias="status", max_length=16),
+    name: str | None = Query(
+        default=None,
+        max_length=200,
+        description=(
+            "Filter by exact trace name, e.g. 'cinerater'. Exact rather than "
+            "substring so the index on (project_id, started_at) still does the "
+            "work and the filter is predictable in the UI."
+        ),
+    ),
     is_replay: bool | None = Query(
         default=None,
         description=(
@@ -181,6 +190,10 @@ async def list_traces(
     stmt = select(Trace).where(Trace.project_id == api_key.project_id)
     if status_filter is not None:
         stmt = stmt.where(Trace.status == status_filter)
+    # Empty string means "no filter", not "name is empty" — a bare `?name=` in
+    # the URL (easy to produce by clearing a filter) should show everything.
+    if name:
+        stmt = stmt.where(Trace.name == name)
     if is_replay is not None:
         stmt = stmt.where(Trace.is_replay == is_replay)
 

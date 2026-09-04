@@ -296,6 +296,94 @@ async def test_list_traces_is_replay_filter_applies_before_pagination(client):
     assert body["has_more"] is True
 
 
+async def test_list_traces_name_filter_exact_match(client):
+    """U-005: page 1 was 20 rows of genre_extract, so the 9 cinerater traces (the
+    actual demo agent) never showed. `name` puts them back on page 1."""
+    await client.post("/v1/traces", json=make_trace_payload(name="cinerater"))
+    await client.post("/v1/traces", json=make_trace_payload(name="genre_extract"))
+    await client.post("/v1/traces", json=make_trace_payload(name="triage_repo"))
+
+    resp = await client.get("/v1/traces?name=cinerater")
+    items = resp.json()["items"]
+    assert len(items) == 1
+    assert items[0]["name"] == "cinerater"
+
+
+async def test_list_traces_name_filter_is_not_substring(client):
+    """Exact, not LIKE — 'cinerater' must not drag in 'cinerater (suite replay)'."""
+    await client.post("/v1/traces", json=make_trace_payload(name="cinerater"))
+    await client.post(
+        "/v1/traces", json=make_trace_payload(name="cinerater (suite replay)")
+    )
+
+    resp = await client.get("/v1/traces?name=cinerater")
+    items = resp.json()["items"]
+    assert len(items) == 1
+    assert items[0]["name"] == "cinerater"
+
+
+async def test_list_traces_without_name_returns_all(client):
+    """Omitting the param must not change behaviour for existing callers."""
+    await client.post("/v1/traces", json=make_trace_payload(name="cinerater"))
+    await client.post("/v1/traces", json=make_trace_payload(name="genre_extract"))
+
+    resp = await client.get("/v1/traces")
+    assert len(resp.json()["items"]) == 2
+
+
+async def test_list_traces_name_combines_with_status_and_is_replay(client):
+    await client.post(
+        "/v1/traces", json=make_trace_payload(name="cinerater", status="error")
+    )
+    await client.post(
+        "/v1/traces", json=make_trace_payload(name="cinerater", status="success")
+    )
+    await client.post(
+        "/v1/traces",
+        json=make_trace_payload(name="cinerater", status="error", is_replay=True),
+    )
+    await client.post(
+        "/v1/traces", json=make_trace_payload(name="genre_extract", status="error")
+    )
+
+    resp = await client.get("/v1/traces?name=cinerater&status=error&is_replay=false")
+    items = resp.json()["items"]
+    assert len(items) == 1
+    assert items[0]["name"] == "cinerater"
+    assert items[0]["status"] == "error"
+
+
+async def test_list_traces_empty_name_is_no_filter(client):
+    """`?name=` (cleared filter in the URL) must not mean "name equals ''"."""
+    await client.post("/v1/traces", json=make_trace_payload(name="cinerater"))
+    await client.post("/v1/traces", json=make_trace_payload(name="genre_extract"))
+
+    resp = await client.get("/v1/traces?name=")
+    assert len(resp.json()["items"]) == 2
+
+
+async def test_list_traces_name_filter_applies_before_pagination(client):
+    """Filter must run in SQL, not after LIMIT — otherwise has_more lies."""
+    for _ in range(3):
+        await client.post("/v1/traces", json=make_trace_payload(name="genre_extract"))
+    for _ in range(3):
+        await client.post("/v1/traces", json=make_trace_payload(name="cinerater"))
+
+    resp = await client.get("/v1/traces?name=cinerater&limit=2")
+    body = resp.json()
+    assert len(body["items"]) == 2
+    assert all(t["name"] == "cinerater" for t in body["items"])
+    assert body["has_more"] is True
+
+
+async def test_list_traces_unknown_name_returns_empty(client):
+    await client.post("/v1/traces", json=make_trace_payload(name="cinerater"))
+
+    resp = await client.get("/v1/traces?name=no_such_agent")
+    assert resp.status_code == 200
+    assert resp.json()["items"] == []
+
+
 async def test_list_traces_pagination_has_more(client):
     for i in range(3):
         await client.post("/v1/traces", json=make_trace_payload(name=f"trace_{i}"))
