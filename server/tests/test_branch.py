@@ -19,7 +19,12 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from sqlalchemy.orm import selectinload
 
 from app.models import Replay, Span, Trace
-from app.routers.replays import _effective_policy, _run_branch
+from app.routers.replays import (
+    ModelNotFoundError,
+    _effective_policy,
+    _is_model_not_found,
+    _run_branch,
+)
 from tests.conftest import make_engine, make_span_payload, make_trace_payload
 
 
@@ -203,6 +208,141 @@ async def test_branch_reexecutes_llm_after_branch(project, db):
     assert by_name["classify_b"].output == {"content": "fresh-b"}
     assert by_name["classify_b"].provider == "groq"
     assert by_name["classify_b"].total_tokens == 15
+
+
+async def test_branch_falls_back_when_the_model_is_retired(project, db):
+    """B13: Groq retired llama-3.3-70b-versatile, which made every stored trace
+    un-replayable. The engine retries once on the fallback model and says so."""
+    sf = async_sessionmaker(make_engine(), expire_on_commit=False)
+    spans = [
+        _span("classify_a", "llm", 0, model="llama-3.3-70b-versatile", provider="groq",
+              input={"messages": [{"role": "user", "content": "a"}]},
+              output={"content": "old-a"}),
+        _span("classify_b", "llm", 1, model="llama-3.3-70b-versatile", provider="groq",
+              input={"messages": [{"role": "user", "content": "b"}]},
+              output={"content": "old-b"}),
+    ]
+    branch_span = spans[0]
+    original, new_trace_id, replay_id = await _seed(sf, project.id, spans)
+
+    calls: list[str] = []
+
+    async def groq(model, messages):
+        calls.append(model)
+        if model == "llama-3.3-70b-versatile":
+            raise ModelNotFoundError(
+                'API 404: {"error":{"code":"model_not_found"}}'
+            )
+        return {
+            "choices": [{"message": {"content": "fresh-b"}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+        }
+
+    with (
+        patch("app.routers.replays.SessionLocal", new=sf),
+        patch("app.routers.replays.settings.replay_fallback_model", "openai/gpt-oss-120b"),
+        patch("app.routers.replays._call_groq", new=groq),
+    ):
+        await _run_branch(
+            replay_id=replay_id, new_trace_id=new_trace_id,
+            original_trace_id=original.id, branch_span_id=branch_span.id,
+            new_output={"content": "edited-a"}, project_id=project.id,
+        )
+
+    trace, by_name = await _load(sf, new_trace_id)
+    assert trace.status == "success"
+    assert calls == ["llama-3.3-70b-versatile", "openai/gpt-oss-120b"], calls
+
+    b = by_name["classify_b"]
+    assert b.output == {"content": "fresh-b"}
+    # The span must record what actually ran, not what was asked for.
+    assert b.model == "openai/gpt-oss-120b"
+    assert b.extra_metadata["model_substituted"] == {
+        "from": "llama-3.3-70b-versatile",
+        "to": "openai/gpt-oss-120b",
+    }
+
+
+async def test_branch_does_not_fall_back_on_a_non_model_error(project, db):
+    """The trap: retrying a 401 on a different model would have hidden the
+    revoked Groq key that DR-04 found. Only model_not_found retries."""
+    sf = async_sessionmaker(make_engine(), expire_on_commit=False)
+    spans = [
+        _span("classify_a", "llm", 0, model="llama-3.3-70b-versatile", provider="groq",
+              input={"messages": [{"role": "user", "content": "a"}]},
+              output={"content": "old-a"}),
+        _span("classify_b", "llm", 1, model="llama-3.3-70b-versatile", provider="groq",
+              input={"messages": [{"role": "user", "content": "b"}]},
+              output={"content": "old-b"}),
+    ]
+    branch_span = spans[0]
+    original, new_trace_id, replay_id = await _seed(sf, project.id, spans)
+
+    calls: list[str] = []
+
+    async def groq(model, messages):
+        calls.append(model)
+        raise RuntimeError('API 401: {"error":{"message":"Invalid API Key"}}')
+
+    with (
+        patch("app.routers.replays.SessionLocal", new=sf),
+        patch("app.routers.replays.settings.replay_fallback_model", "openai/gpt-oss-120b"),
+        patch("app.routers.replays._call_groq", new=groq),
+    ):
+        await _run_branch(
+            replay_id=replay_id, new_trace_id=new_trace_id,
+            original_trace_id=original.id, branch_span_id=branch_span.id,
+            new_output={"content": "edited-a"}, project_id=project.id,
+        )
+
+    trace, _ = await _load(sf, new_trace_id)
+    assert trace.status == "error"
+    assert "401" in trace.error["message"]
+    assert calls == ["llama-3.3-70b-versatile"], "a 401 must not be retried elsewhere"
+
+
+async def test_branch_fails_loudly_when_no_fallback_configured(project, db):
+    """Empty replay_fallback_model = the operator chose to fail loudly."""
+    sf = async_sessionmaker(make_engine(), expire_on_commit=False)
+    spans = [
+        _span("classify_a", "llm", 0, model="llama-3.3-70b-versatile", provider="groq",
+              input={"messages": [{"role": "user", "content": "a"}]},
+              output={"content": "old-a"}),
+        _span("classify_b", "llm", 1, model="llama-3.3-70b-versatile", provider="groq",
+              input={"messages": [{"role": "user", "content": "b"}]},
+              output={"content": "old-b"}),
+    ]
+    branch_span = spans[0]
+    original, new_trace_id, replay_id = await _seed(sf, project.id, spans)
+
+    async def groq(model, messages):
+        raise ModelNotFoundError('API 404: {"error":{"code":"model_not_found"}}')
+
+    with (
+        patch("app.routers.replays.SessionLocal", new=sf),
+        patch("app.routers.replays.settings.replay_fallback_model", ""),
+        patch("app.routers.replays._call_groq", new=groq),
+    ):
+        await _run_branch(
+            replay_id=replay_id, new_trace_id=new_trace_id,
+            original_trace_id=original.id, branch_span_id=branch_span.id,
+            new_output={"content": "edited-a"}, project_id=project.id,
+        )
+
+    trace, _ = await _load(sf, new_trace_id)
+    assert trace.status == "error"
+    assert "model_not_found" in trace.error["message"]
+
+
+def test_model_not_found_detection():
+    """Providers disagree on the status code, so match on the body."""
+    assert _is_model_not_found(404, '{"error":{"code":"model_not_found"}}')
+    assert _is_model_not_found(404, "The model `llama-3.3-70b` does not exist")
+    assert _is_model_not_found(400, "unknown model: gpt-9")
+    # Not a retired model — must surface as-is.
+    assert not _is_model_not_found(401, '{"error":{"message":"Invalid API Key"}}')
+    assert not _is_model_not_found(429, "rate limit exceeded")
+    assert not _is_model_not_found(500, "internal error")
 
 
 async def test_branch_llm_passthrough_when_server_replay_disabled(project, db):

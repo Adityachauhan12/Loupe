@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
@@ -72,6 +73,45 @@ def _detect_provider(model: str, fallback: str | None = None) -> str:
     return "openai"
 
 
+async def _dispatch_llm(
+    provider: str,
+    model: str,
+    messages: list[dict[str, Any]],
+    system_prompt: str | None,
+) -> tuple[str, int, int, str]:
+    """Run one LLM call and normalise the three providers' response shapes.
+
+    Returns (provider, prompt_tokens, completion_tokens, content_text). Pulled
+    out of the branch loop so B13's fallback can retry the *same* call on a
+    different model without duplicating the response-parsing for each provider.
+    """
+    if provider == "anthropic":
+        raw = await _call_anthropic(model, messages, system_prompt)
+        usage = raw.get("usage", {})
+        blocks = raw.get("content", [])
+        return (
+            "anthropic",
+            usage.get("input_tokens", 0),
+            usage.get("output_tokens", 0),
+            blocks[0].get("text", "") if blocks else "",
+        )
+
+    if provider == "groq":
+        raw = await _call_groq(model, messages)
+    else:
+        provider = "openai"
+        raw = await _call_openai(model, messages)
+
+    usage = raw.get("usage", {})
+    choices = raw.get("choices", [])
+    return (
+        provider,
+        usage.get("prompt_tokens", 0),
+        usage.get("completion_tokens", 0),
+        choices[0]["message"]["content"] if choices else "",
+    )
+
+
 def _effective_policy(span_type: str, replay_policy: str | None) -> str:
     """Decide how a span *after the branch point* should be handled on replay.
 
@@ -94,6 +134,32 @@ def _effective_policy(span_type: str, replay_policy: str | None) -> str:
     return "live"
 
 
+class ModelNotFoundError(RuntimeError):
+    """The provider no longer serves this model.
+
+    B13: distinguished from every other provider failure on purpose. A retired
+    model is the one error worth retrying on a *different* model; a 401, a rate
+    limit or a timeout must surface as-is, because silently switching models
+    there would hide a real operational failure (that is how the revoked Groq
+    key stayed invisible until DR-04).
+    """
+
+
+def _is_model_not_found(status_code: int, body: str) -> bool:
+    """True when the provider is telling us the model itself is gone.
+
+    Providers disagree on the status code — Groq answers 404, OpenAI 404, and
+    some proxies 400 — so match on the machine-readable code in the body and
+    treat the status as corroboration rather than the signal.
+    """
+    lowered = body.lower()
+    if "model_not_found" in lowered:
+        return True
+    return status_code in (400, 404) and (
+        "does not exist" in lowered or "unknown model" in lowered
+    )
+
+
 async def _call_openai_compat(
     base_url: str, api_key: str, model: str, messages: list[dict[str, Any]]
 ) -> dict[str, Any]:
@@ -108,7 +174,10 @@ async def _call_openai_compat(
             json={"model": model, "messages": messages},
         )
         if not resp.is_success:
-            raise RuntimeError(f"API {resp.status_code}: {resp.text[:300]}")
+            body = resp.text[:300]
+            if _is_model_not_found(resp.status_code, resp.text):
+                raise ModelNotFoundError(f"API {resp.status_code}: {body}")
+            raise RuntimeError(f"API {resp.status_code}: {body}")
         return resp.json()
 
 
@@ -231,30 +300,15 @@ async def _run_replay(
                 provider = _detect_provider(model, fallback=orig_span.provider)
 
                 try:
-                    span_ended = datetime.now(timezone.utc)
-                    if provider == "anthropic":
-                        raw = await _call_anthropic(model, messages, system_prompt)
-                        prompt_tokens = raw.get("usage", {}).get("input_tokens", 0)
-                        completion_tokens = raw.get("usage", {}).get("output_tokens", 0)
-                        content_blocks = raw.get("content", [])
-                        content_text = content_blocks[0].get("text", "") if content_blocks else ""
-                        provider = "anthropic"
-                    elif provider == "groq":
-                        raw = await _call_groq(model, messages)
-                        usage = raw.get("usage", {})
-                        prompt_tokens = usage.get("prompt_tokens", 0)
-                        completion_tokens = usage.get("completion_tokens", 0)
-                        choices = raw.get("choices", [])
-                        content_text = choices[0]["message"]["content"] if choices else ""
-                        provider = "groq"
-                    else:
-                        raw = await _call_openai(model, messages)
-                        usage = raw.get("usage", {})
-                        prompt_tokens = usage.get("prompt_tokens", 0)
-                        completion_tokens = usage.get("completion_tokens", 0)
-                        choices = raw.get("choices", [])
-                        content_text = choices[0]["message"]["content"] if choices else ""
-                        provider = "openai"
+                    result = await _invoke_llm(
+                        model, messages, system_prompt, orig_span.provider
+                    )
+                    model = result.model
+                    provider = result.provider
+                    prompt_tokens = result.prompt_tokens
+                    completion_tokens = result.completion_tokens
+                    content_text = result.content
+                    substituted = result.substituted
 
                     span_ended = datetime.now(timezone.utc)
                     tok = prompt_tokens + completion_tokens
@@ -281,7 +335,9 @@ async def _run_replay(
                         "completion_tokens": completion_tokens,
                         "total_tokens": tok,
                         "cost_usd": cost,
-                        "extra_metadata": None,
+                        "extra_metadata": (
+                            {"model_substituted": substituted} if substituted else None
+                        ),
                     })
                     final_output = {"content": content_text}
 
@@ -371,37 +427,63 @@ async def _run_replay(
         logger.info("replay complete", replay_id=str(replay_id), status=replay_status)
 
 
+@dataclass
+class LlmResult:
+    """One completed LLM call, normalised across providers.
+
+    `model` is what actually ran, which is not always what was asked for:
+    `substituted` is set when B13's fallback kicked in.
+    """
+
+    content: str
+    prompt_tokens: int
+    completion_tokens: int
+    provider: str
+    model: str
+    substituted: dict[str, str] | None = None
+
+
 async def _invoke_llm(
     model: str,
     messages: list[dict[str, Any]],
     system_prompt: str | None,
     fallback_provider: str | None,
-) -> tuple[str, int, int, str]:
-    """Call the right provider for a model. Returns (content, prompt_tokens,
-    completion_tokens, provider). Shared by the branch engine."""
+) -> LlmResult:
+    """Call the right provider for a model, retrying once if the model is gone.
+
+    Shared by both replay engines (`_run_replay` and `_run_branch`) so the B13
+    fallback cannot exist on one path and not the other.
+    """
     provider = _detect_provider(model, fallback=fallback_provider)
-    if provider == "anthropic":
-        raw = await _call_anthropic(model, messages, system_prompt)
-        usage = raw.get("usage", {})
-        prompt_tokens = usage.get("input_tokens", 0)
-        completion_tokens = usage.get("output_tokens", 0)
-        blocks = raw.get("content", [])
-        content = blocks[0].get("text", "") if blocks else ""
-    elif provider == "groq":
-        raw = await _call_groq(model, messages)
-        usage = raw.get("usage", {})
-        prompt_tokens = usage.get("prompt_tokens", 0)
-        completion_tokens = usage.get("completion_tokens", 0)
-        choices = raw.get("choices", [])
-        content = choices[0]["message"]["content"] if choices else ""
-    else:
-        raw = await _call_openai(model, messages)
-        usage = raw.get("usage", {})
-        prompt_tokens = usage.get("prompt_tokens", 0)
-        completion_tokens = usage.get("completion_tokens", 0)
-        choices = raw.get("choices", [])
-        content = choices[0]["message"]["content"] if choices else ""
-    return content, prompt_tokens, completion_tokens, provider
+    try:
+        provider, ptok, ctok, content = await _dispatch_llm(
+            provider, model, messages, system_prompt
+        )
+        return LlmResult(content, ptok, ctok, provider, model)
+    except ModelNotFoundError:
+        # B13: the model recorded on the original span no longer exists — Groq
+        # retired every Llama chat model, which made every seeded trace
+        # un-replayable. Retry once on the configured fallback and report the
+        # swap, so the diff never claims the original model ran.
+        fallback_model = settings.replay_fallback_model.strip()
+        if not fallback_model or fallback_model == model:
+            raise
+        logger.warning(
+            "model retired, retrying on fallback",
+            retired_model=model,
+            fallback_model=fallback_model,
+        )
+        # The fallback is expected to be reachable through the same provider as
+        # the original span. If it is not, this second call fails and the real
+        # error surfaces — we never retry twice.
+        provider = _detect_provider(fallback_model, fallback=fallback_provider)
+        provider, ptok, ctok, content = await _dispatch_llm(
+            provider, fallback_model, messages, system_prompt
+        )
+        return LlmResult(
+            content, ptok, ctok, provider, fallback_model,
+            substituted={"from": model, "to": fallback_model},
+        )
 
 
 def _copy_span_dict(
@@ -520,9 +602,15 @@ async def _run_branch(
                 model = orig.model or "claude-haiku-4-5-20251001"
                 span_started = datetime.now(timezone.utc)
                 try:
-                    content, ptok, ctok, provider = await _invoke_llm(
+                    result = await _invoke_llm(
                         model, messages, system_prompt, orig.provider
                     )
+                    content, ptok, ctok = (
+                        result.content, result.prompt_tokens, result.completion_tokens
+                    )
+                    # B13: `model` is what actually ran, not what was recorded —
+                    # cost and the span row must both follow the substitution.
+                    model, provider = result.model, result.provider
                     span_ended = datetime.now(timezone.utc)
                     tok = ptok + ctok
                     cost = _estimate_cost(model, ptok, ctok)
@@ -535,7 +623,11 @@ async def _run_branch(
                         "duration_ms": int((span_ended - span_started).total_seconds() * 1000),
                         "model": model, "provider": provider,
                         "prompt_tokens": ptok, "completion_tokens": ctok, "total_tokens": tok,
-                        "cost_usd": cost, "extra_metadata": None,
+                        "cost_usd": cost,
+                        "extra_metadata": (
+                            {"model_substituted": result.substituted}
+                            if result.substituted else None
+                        ),
                     }
                 except Exception as exc:
                     logger.error("branch: llm call failed", replay_id=str(replay_id), error=str(exc))

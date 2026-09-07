@@ -207,6 +207,15 @@ export function MarkerBadges({
       cls: "bg-surface-2 text-faint border-line",
       title: "Stored output reused — the server can't re-run this tool live.",
     });
+  // B13: the recorded model was retired by the provider, so the replay ran on a
+  // different one. Never let the diff imply the original model produced this.
+  const swap = meta.model_substituted as { from?: string; to?: string } | undefined;
+  if (swap?.to)
+    badges.push({
+      label: "model swapped",
+      cls: "bg-warning-dim/40 text-warning border-warning/30",
+      title: `${swap.from ?? "the original model"} is no longer available — this span ran on ${swap.to} instead.`,
+    });
   if (badges.length === 0) return null;
   return (
     <>

@@ -42,6 +42,7 @@
 | B9 | Replay-plan concurrency (ContextVar / async / threads) | 🔵 |
 | B10 | Embedded outbound worker (server-side branch runs real tools) — B1 option (3) | 🔵 PLANNED (future) |
 | **B11** | **PII / secret redaction — before capture and before the judge** | 🟡 OPEN (needs decision) |
+| **B13** | **Retired provider models break replay of old traces** | ✅ RESOLVED → (B) fallback model + honest label |
 
 ---
 
@@ -711,6 +712,53 @@ for obvious secret shapes + user-configurable keys is the right scope.
 **Decision needed.** SDK-side on-by-default redaction (A), server-only (B), both/defense-in-depth
 (C), or document-the-convention-only (D)? And: is redaction **on by default** (recommended) or
 opt-in?
+
+---
+
+### B13 — A retired model makes old traces un-replayable ✅ RESOLVED → (B) fallback + label
+
+**Found by DR-04 on production, 2026-09-07.** Branching any seeded `cinerater` trace
+failed with:
+
+```
+API 404: The model `llama-3.3-70b-versatile` does not exist or you do not have access to it.
+```
+
+Groq had retired every Llama chat model. The branch engine re-runs the model recorded on
+the original span (`model_override or orig_span.model`), so the retirement made **every
+historical trace permanently un-replayable** — not just ours. This is structural: a trace
+is durable, the model behind it is not.
+
+(The same walk first surfaced a revoked `GROQ_API_KEY` on Render — the last loose thread
+of L-013. That was an ops fix, not an architectural one, and is not tracked here.)
+
+**Options considered:**
+
+- **(A) Re-seed the demo traces on a current model.** ~30 min, unblocks the recording.
+  But it only rescues our own demo; any user's old traces still 404, and the next
+  retirement brings it straight back.
+- **(B) Fallback in the engine.** On a `model_not_found` error, retry once with
+  `settings.replay_fallback_model`, and record `model_substituted: {from, to}` on the
+  span so the UI can say so. The replay stays possible, and the diff does not silently
+  claim the original model ran.
+- **(C) Fail loudly, no fallback.** Honest, but leaves the product with a dead end and no
+  path forward for the user.
+- **(D) Pin every trace to a snapshot of the model.** Impossible — we do not host the
+  weights.
+
+**Decision: (B).** A replay that cannot run teaches nothing; a replay that quietly swaps
+the model lies. Substituting *and labelling* keeps both properties. The retry fires only
+on `model_not_found` — never on a 401, a rate limit, or a timeout, where retrying on a
+different model would hide a real operational failure.
+
+**Fallback model: `openai/gpt-oss-120b`** (served by Groq, free tier). Chosen over
+`gpt-oss-20b` because the same setting backs `judge_backend`, and a weak judge produces
+false "regressed" verdicts — which is the whole of v2.2.
+
+**Cost of the decision:** the branch diff now carries an extra thing to explain during the
+demo ("this ran on a substituted model"). Accepted: an honest extra sentence beats a
+silent one. Re-seeding the demo traces (option A) remains available on top, and would make
+the recording cleaner without changing the engine behaviour.
 
 ---
 

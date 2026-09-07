@@ -15,6 +15,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.config import settings
 from app.models import Suite, SuiteRun, SuiteTrace, Trace
 from app.routers.suites import _judge_output, _run_suite
 from app.services.judge import Verdict
@@ -207,7 +208,9 @@ async def test_run_endpoint_creates_run_row(client):
     body = got.json()
     assert body["status"] == "running"
     assert body["prompt_override"] == "new prompt"
-    assert body["judge_backend"] == "groq/llama-3.3-70b-versatile"
+    # Read the default from settings rather than hardcoding it: the literal
+    # rotted when Groq retired llama-3.3-70b-versatile (B13).
+    assert body["judge_backend"] == settings.judge_backend
 
 
 @pytest.mark.asyncio
