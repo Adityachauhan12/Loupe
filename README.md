@@ -22,11 +22,29 @@ That replay loop is the whole point. Everything else exists to serve it.
 
 ## Screenshots
 
-| Traces list | Trace detail (span tree) |
-|---|---|
-| ![Traces list](docs/traces-list.png) | ![Trace detail](docs/trace-detail.png) |
+**The whole point, in three screens.** CineRater is asked for a sci-fi classic from 1997.
+The catalogue only holds 2022-2025 films, so the parse step returns a year nothing matches,
+the search comes back empty, and the agent crashes on the empty list.
 
-**The branch diff** — original vs counterfactual, aligned from the branch point, with per-span text diffs. Here a parse step is branched from `Sci-Fi` → `Comedy`; the edit propagates through the real tools and the final recommendation changes (Dune → Poor Things):
+**1. The failed run leads the list**, next to every other run with its latency, tokens and cost.
+
+![Traces list](docs/traces-list.png)
+
+**2. The span tree shows which step went wrong** — the LLM returned
+`{"genre":"Sci-Fi","year":1997}`, and `search_movies` found nothing. `Branch from here`
+appears on that span, because something ran after it.
+
+![Trace detail — the failed run and the span that caused it](docs/trace-detail.png)
+
+**3. Change that one output to `2023` and re-run from there.** The branch is compared
+against the original from the branch point onward:
+
+![Branch diff — error to success](docs/branch-fixed.png)
+
+A server-side branch re-runs LLM calls but leaves tools as dry-run ghosts, which is why
+`search_movies` above shows what it *would have* called. For a branch where the edit flows
+through the real tools, `loupe.replay` runs it from your own code — here a parse step
+branched from `Sci-Fi` → `Comedy` changes the final recommendation (Dune → Poor Things):
 
 ![Branch diff — header, deltas, and the edited span](docs/branch-diff-1.png)
 ![Branch diff — the change propagating downstream](docs/branch-diff-2.png)
