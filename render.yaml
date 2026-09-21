@@ -31,5 +31,8 @@ services:
       - key: ANTHROPIC_API_KEY
         sync: false
 
+      # Consumed by the example agent, not by the server (Settings has no
+      # groq_model field). Kept in sync with the live catalogue: Groq retired
+      # llama-3.3-70b-versatile in 2026 — see B13.
       - key: GROQ_MODEL
-        value: llama-3.3-70b-versatile
+        value: openai/gpt-oss-120b

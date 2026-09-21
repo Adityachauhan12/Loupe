@@ -24,7 +24,9 @@ from examples.cinerater.tools import get_movie_details, search_movies
 
 load_dotenv()
 
-GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+# Groq retired every Llama chat model in 2026 (B13), which is also why the
+# server can substitute a live model when replaying an old trace.
+GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 
 # Initialise Loupe — points the SDK at the local server.
 loupe.init(
