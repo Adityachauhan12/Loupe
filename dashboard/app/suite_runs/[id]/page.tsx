@@ -123,17 +123,26 @@ function Headline({ run }: { run: SuiteRunDetail }) {
   const bad = run.regressed > 0 || run.errored > 0;
   return (
     <>
+      {/* U-004: lead with the verdict, not the tally. "0/15 passed" alone reads
+          as a broken tool; the run did its job — the prompt under test did not. */}
       <h1
         className={cn(
           "text-2xl font-bold tracking-tight",
           bad ? "text-error" : "text-success",
         )}
       >
-        {bad ? "✗" : "✓"} {run.passed}/{run.total} passed
+        {bad
+          ? `Caught ${run.regressed + run.errored} regression${
+              run.regressed + run.errored === 1 ? "" : "s"
+            }`
+          : "No regressions"}
       </h1>
       <p className="mt-1 text-sm text-muted">
-        {run.improved} improved · {run.regressed} regressed · {run.errored} errored
-        {bad && " — this run would block the PR."}
+        {run.passed}/{run.total} passed · {run.improved} improved ·{" "}
+        {run.regressed} regressed · {run.errored} errored
+        {bad
+          ? " — this run would block the PR."
+          : " — this run would pass the PR check."}
       </p>
     </>
   );
