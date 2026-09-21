@@ -7,6 +7,7 @@ from typing import Any
 
 import loupe._replay as _replay
 from loupe.core import span
+from loupe.integrations._completion_meta import completion_metadata
 
 # Cost per 1M tokens (input, output). Groq pricing as of May 2026.
 _COST_PER_M: dict[str, tuple[float, float]] = {
@@ -90,7 +91,9 @@ def instrument_groq(client: Any) -> None:
             choices = getattr(response, "choices", [])
             if choices:
                 msg = getattr(choices[0], "message", None)
-                s.output = {"content": getattr(msg, "content", None)}
+                content = getattr(msg, "content", None)
+                s.output = {"content": content}
+                s.metadata = completion_metadata(choices[0], content, s.metadata)
 
         return response
 

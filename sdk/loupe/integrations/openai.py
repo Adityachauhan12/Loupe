@@ -5,6 +5,7 @@ from decimal import Decimal
 from typing import Any
 
 from loupe.core import span
+from loupe.integrations._completion_meta import completion_metadata
 
 # Cost per 1M tokens (input, output) for common models.
 # These are approximate — update as pricing changes.
@@ -76,7 +77,10 @@ def instrument_openai(client: Any, provider: str = "openai") -> None:
             choices = getattr(response, "choices", [])
             if choices:
                 msg = getattr(choices[0], "message", None)
-                output: dict[str, Any] = {"content": getattr(msg, "content", None)}
+                content = getattr(msg, "content", None)
+                output: dict[str, Any] = {"content": content}
+                # Why the completion ended, when that is not the boring answer.
+                s.metadata = completion_metadata(choices[0], content, s.metadata)
                 # Capture tool calls too — for agentic loops the content is
                 # often None and the useful signal is which tool was chosen.
                 tool_calls = getattr(msg, "tool_calls", None)

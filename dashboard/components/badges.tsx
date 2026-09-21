@@ -207,6 +207,29 @@ export function MarkerBadges({
       cls: "bg-surface-2 text-faint border-line",
       title: "Stored output reused — the server can't re-run this tool live.",
     });
+  // The completion did not end cleanly. An empty output field alone cannot tell
+  // a refusal from a truncation, and on a reasoning model "length" usually means
+  // the hidden reasoning pass spent the whole max_tokens budget.
+  if (meta.finish_reason === "length") {
+    const chars = meta.reasoning_chars as number | undefined;
+    badges.push({
+      label: meta.empty_answer === true ? "no answer — truncated" : "truncated",
+      cls: "bg-warning-dim/40 text-warning border-warning/30",
+      title:
+        (meta.empty_answer === true
+          ? "The model returned nothing and stopped at max_tokens. "
+          : "The answer was cut off at max_tokens. ") +
+        (chars
+          ? `${chars.toLocaleString()} characters went to the reasoning pass, which is paid from the same budget — raise max_tokens or lower reasoning_effort.`
+          : "Raise max_tokens for this call."),
+    });
+  } else if (meta.empty_answer === true) {
+    badges.push({
+      label: "no answer",
+      cls: "bg-warning-dim/40 text-warning border-warning/30",
+      title: `The model returned no content (finish_reason: ${String(meta.finish_reason)}).`,
+    });
+  }
   // B13: the recorded model was retired by the provider, so the replay ran on a
   // different one. Never let the diff imply the original model produced this.
   const swap = meta.model_substituted as { from?: string; to?: string } | undefined;

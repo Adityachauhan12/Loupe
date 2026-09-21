@@ -5,6 +5,7 @@ from decimal import Decimal
 from typing import Any
 
 from loupe.core import span
+from loupe.integrations._completion_meta import anthropic_completion_metadata
 
 _COST_PER_M: dict[str, tuple[float, float]] = {
     "claude-opus-4":     (15.00,  75.00),
@@ -67,7 +68,9 @@ def instrument_anthropic(client: Any) -> None:
 
             content = getattr(response, "content", [])
             if content:
-                s.output = {"content": getattr(content[0], "text", str(content[0]))}
+                text = getattr(content[0], "text", str(content[0]))
+                s.output = {"content": text}
+                s.metadata = anthropic_completion_metadata(response, text, s.metadata)
 
         return response
 

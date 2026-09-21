@@ -4,6 +4,39 @@ All notable changes to `loupe-sdk`. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.3] — 2026-09-21
+
+### Added
+
+- **LLM spans now record *why* a completion ended**, in span metadata, whenever that is
+  not the boring answer: `finish_reason`, `empty_answer`, and `reasoning_chars`.
+
+  The case this comes from: an app moved off a retired model onto a reasoning model and
+  kept its old `max_tokens`. Reasoning models write a hidden reasoning pass before the
+  answer and both are paid from the same budget, so the reasoning consumed all of it and
+  the answer came back empty with `finish_reason="length"`. Nothing raised — the caller
+  parsed the empty string, fell back to a default, and carried on with clean logs and a
+  200 response. The only trace of it was a span whose output read `{"content": ""}`,
+  which cannot tell a truncation from a refusal or a content filter.
+
+  Measured on the real spans: 1,885 characters of reasoning and 0 of answer at
+  `max_tokens=500`; 2,523 and 0 at 800. The span now says so directly:
+
+  ```json
+  {"finish_reason": "length", "empty_answer": true, "reasoning_chars": 2126}
+  ```
+
+  A completion that stopped normally with an answer records nothing, so ordinary spans
+  do not grow a field nobody reads. A turn that chose a tool (`finish_reason`
+  `tool_calls`) is not flagged either — returning no content is the whole shape of an
+  agentic step. Anthropic's `stop_reason: "max_tokens"` is normalised to `"length"` so
+  there is one vocabulary downstream. The reasoning *text* is never stored, only its
+  length: it is long, often not meant to be shown, and would bloat every span for the one
+  case where the size is the clue.
+
+  Covers `instrument_openai`, `instrument_groq` and `instrument_anthropic`. The Loupe
+  dashboard shows this as a "truncated" / "no answer — truncated" badge on the span.
+
 ## [0.3.2] — 2026-08-20
 
 ### Fixed
