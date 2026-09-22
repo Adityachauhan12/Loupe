@@ -49,6 +49,11 @@ export default async function SuiteRunPage({
               <Zap className="size-3.5 text-faint" />
               judge <span className="font-mono">{run!.judge_backend ?? "—"}</span>
             </span>
+            {/* Naming the backend implies it did the work, and often it did not:
+                identical outputs are settled for free, and a broken output shape
+                is caught by a string check. Say how many verdicts it actually
+                produced, so the cost and the confidence are both honest. */}
+            <ScorerBreakdown results={run!.results ?? []} />
             {run!.model_override && (
               <span className="font-mono">model → {run!.model_override}</span>
             )}
@@ -110,6 +115,29 @@ function rank(r: SuiteRunResult): number {
   if (r.verdict === "regressed") return 0;
   if (r.verdict === "improved") return 2;
   return 3;
+}
+
+/** Which scorer produced the verdicts — the LLM judge is only one of three. */
+function ScorerBreakdown({ results }: { results: { score_source?: string }[] }) {
+  if (results.length === 0) return null;
+  const counts = results.reduce<Record<string, number>>((acc, r) => {
+    const key = r.score_source ?? "judge";
+    acc[key] = (acc[key] ?? 0) + 1;
+    return acc;
+  }, {});
+  const label: Record<string, string> = {
+    judge: "judged by the LLM",
+    deterministic: "identical, no LLM call",
+    shape_guard: "caught by the shape check",
+  };
+  const parts = Object.entries(counts)
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, n]) => `${n} ${label[k] ?? k}`);
+  return (
+    <span title="Every verdict is settled by the cheapest check that can decide it; the judge LLM runs only on what is left.">
+      {parts.join(" · ")}
+    </span>
+  );
 }
 
 function Headline({ run }: { run: SuiteRunDetail }) {
